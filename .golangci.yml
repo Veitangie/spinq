@@ -1,0 +1,24 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - errorlint
+    - nilerr
+  exclusions:
+    generated: lax
+    paths:
+      - local/
+      - examples/
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

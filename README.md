@@ -1,0 +1,254 @@
+# spinq
+
+**S**imple s**PIN**ner tool**Q**it.
+
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/Veitangie/spinq/graph/badge.svg)](https://codecov.io/gh/Veitangie/spinq)
+[![CI](https://github.com/Veitangie/spinq/actions/workflows/ci.yml/badge.svg)](https://github.com/Veitangie/spinq/actions/workflows/ci.yml)
+![Release Version](https://img.shields.io/github/v/release/Veitangie/spinq?include_prereleases&logo=github)
+[![Go Reference](https://pkg.go.dev/badge/veitangie.dev/spinq.svg)](https://pkg.go.dev/veitangie.dev/spinq)
+
+A lightweight, actor-based terminal spinner and progress-bar library for Go.
+
+```go
+pair, err := spinq.JustStart()
+if err != nil {
+    log.Fatal(err)
+}
+defer pair.Close()
+
+fmt.Fprintln(pair.Standard, "this prints cleanly, spinner and all")
+```
+
+## See it in action
+
+![Simple spinner demo](examples/simple/simple.gif)
+
+```go
+package main
+
+import (
+	"fmt"
+	"math/rand"
+	"os"
+	"time"
+
+	"veitangie.dev/spinq"
+)
+
+func main() {
+	p, err := spinq.JustStart()
+	if err != nil {
+		fmt.Printf("Failed to start spinner: %s\n", err.Error())
+		os.Exit(1)
+	}
+	defer p.Close()
+	stdout, stderr := p.Standard, p.Spinny
+	defer stderr.StopWith("All done!\n")
+	fmt.Fprintln(stdout, "Going to sleep for 3 seconds")
+	go func() {
+		time.Sleep(time.Duration(rand.Intn(3)) * time.Second)
+		fmt.Fprintln(stderr, "This is an error on stderr")
+	}()
+	time.Sleep(3 * time.Second)
+}
+```
+
+<details>
+<summary>Progress bar example (1000 concurrent workers, one shared bar)</summary>
+
+![Progress bar demo](examples/progress-bar/progress-bar.gif)
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"os"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"veitangie.dev/spinq"
+)
+
+func main() {
+	count := atomic.Int64{}
+
+	p, err := spinq.WrapOS(
+		context.Background(),
+		spinq.Progress(
+			func() (int, int) { return int(count.Load()), 1000 },
+			spinq.SmoothBarRender(12).
+				Join(" ", spinq.FractRender("/"))),
+		spinq.Every(100*time.Millisecond),
+	)
+	if err != nil {
+		fmt.Printf("Failed to start spinner: %s\n", err.Error())
+		os.Exit(1)
+	}
+	defer p.Close()
+
+	stdout, stderr := p.Standard, p.Spinny
+	stderr.Start(context.Background())
+
+	latch := &sync.WaitGroup{}
+	wg := &sync.WaitGroup{}
+	latch.Add(1)
+	for i := range 1000 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			latch.Wait()
+			time.Sleep(time.Duration(rand.Int63n(5000 * int64(time.Millisecond))))
+			fmt.Fprintf(stdout, "Worker %d is doing stuff\n", i)
+			if i%10 == 0 {
+				fmt.Fprintf(stderr, "%sWorker %d FAILED%s\n", spinq.Red, i, spinq.ResetColor)
+			}
+			count.Add(1)
+		}(i)
+	}
+
+	latch.Done()
+	wg.Wait()
+	p.Spinny.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetColor + " Done\n")
+}
+```
+
+</details>
+
+Both examples live in [`examples/`](examples/) and run as-is with `go run .`.
+
+## Why spinq exists
+
+Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
+
+- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq has two direct dependencies: [`go-runewidth`](https://github.com/mattn/go-runewidth), for correct terminal cell-width math (so bars and dividers actually line up with wide/multi-byte glyphs), and `golang.org/x/sync`, for the concurrency primitive that keep `FrameFunc` calls serialized. Everything else is standard library.
+
+- **Forcing the user to give up the stdout/stderr split.** A lot of spinner libraries want to *own* the output - you print through their writer, or not at all, and the Unix convention of "stdout is data, stderr is status" is not supported. spinq still needs you to write through its writers. But spinq keeps both streams separate and independently addressable: `pair.Standard` and `pair.Spinny` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them instead of collapsing them into one.
+
+- **Only ever managing stderr.** Some libraries only consider the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq's approach of bundling two writers allows it to manage the spinner without risking corruption on the other stream. **At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.**
+
+If none of that matters for your use case, you probably don't need spinq - plenty of other great options exist. If it does, spinq was made to solve exactly these problems.
+
+## What spinq does not do
+
+spinq is meant to be lightweight and easy to use, so it comes with some restrictions:
+
+- **No raw/true TTY mode.** spinq never puts the terminal into raw mode, never reads input, and isn't a TUI framework. It's a simple ANSI-writing `io.Writer`. For when you need something to just spin.
+
+- **No terminal width detection.** Bar widths are explicit `int` arguments, always. spinq never queries `$COLUMNS` or an ioctl to auto-fit. The only way to get any semblance of responsive design is to measure the size yourself and pass the result in.
+
+- **No resize handling.** A bar sized for one width doesn't adapt if the terminal resizes mid-run. There's no way to do this safely without a signal handler that knows to stop the spinner, clear correctly, and restart - and that's application-specific behavior, not something spinq wants to touch. You can register your own `SIGWINCH` handler if you need this.
+
+- **No multiline or multi-bar dashboards.** spinq can only manage one line. If you want several concurrent progress bars stacked on screen, spinq is not a good choice.
+
+- **No color.** spinq never emits color itself - `Static`, `Duration`, and friends render plain text. A handful of ANSI color constants (`Red`, `Green`, ...) are exported as a convenience if you want to build your own colored `FrameFunc`, but the choice is entirely yours.
+
+- **No terminal capability negotiation.** Detection is a single check - is this stream a character device - not terminfo/termcap parsing or fallback rendering for non-ANSI terminals.
+
+## Install
+
+```sh
+go get veitangie.dev/spinq
+```
+
+Requires the Go version declared in `go.mod`.
+
+## Quick start
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"veitangie.dev/spinq"
+)
+
+func main() {
+	pair, err := spinq.JustStart()
+	if err != nil {
+		panic(err)
+	}
+	defer pair.Close()
+
+	for i := range 5 {
+		time.Sleep(400 * time.Millisecond)
+		fmt.Fprintf(pair.Standard, "step %d complete\n", i)
+	}
+}
+```
+
+`JustStart` picks sensible defaults - a dots spinner, a "Running (2.3s)"
+duration label, a 100ms redraw tick - and falls back to a silent passthrough
+automatically if stdout/stderr aren't real terminals (redirected output,
+CI). No spinner ever leaks escape codes into a log file.
+
+Customize the label, states, or redraw interval without building a frame
+yourself:
+
+```go
+pair, err := spinq.JustStart(
+	spinq.WithText("Uploading"),
+	spinq.WithStates(spinq.ArrowStates),
+	spinq.WithDuration(50 * time.Millisecond),
+)
+```
+
+## Progress bars
+
+```go
+var done atomic.Int64
+total := 100
+
+render := spinq.JoinRender(" ", spinq.BarRender(30), spinq.PercentRender())
+getFrame := spinq.Progress(func() (int, int) {
+	return int(done.Load()), total
+}, render)
+
+pair, err := spinq.JustStart(spinq.WithFrame(getFrame))
+if err != nil {
+	panic(err)
+}
+defer pair.Close()
+```
+
+`BarRender`/`SmoothBarRender` (sub-cell precision, for smoother fill) both ship a handful of presets (`RoundedBarOptions`, `ShadeBarOptions`, `DotBarOptions`, `MinimalBarOptions`), or take functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own.
+
+## Composing frames
+
+`JustStart`'s own default frame is just ordinary composition of the smaller primitives - nothing it does is unavailable to you:
+
+```go
+frame := spinq.Join("",
+	spinq.Surrounded(" ", spinq.Simple(spinq.DotsStates), " Running ("),
+	spinq.Duration(time.Now),
+	spinq.Static(")"),
+)
+```
+
+`Simple`, `SimpleOnceEvery`, `Random`, `RandomOnceEvery`, `Duration`, `Progress`, `Join`, `Surrounded`, and `Static` all return a plain `FrameFunc` (`func() ([]byte, error)`), so they compose freely. A `FrameFunc` is guaranteed by spinq never to be called concurrently with itself, so its own private state - a counter, an index - never needs its own locking; see the `FrameFunc` doc comment for exactly where that guarantee stops (anything the closure reads that something *else* also writes is still on you to synchronize).
+
+## Lower-level entry points
+
+`JustStart` wraps `WrapOS`, which wraps `WrapFilePair`, which wraps `WrapPair` - each layer adds one piece of default behavior, and each is exported if you need less of it:
+
+- `WrapPair(ctx, main, spinny, getFrame, ticker)`: the primitive. Takes any two `io.Writer`s, no TTY detection at all.
+
+- `WrapFilePair(ctx, main, spinny *os.File, ...)`: adds the character-device check, falling back to a passthrough for non-terminal files.
+
+- `WrapOS(ctx, getFrame, ticker)`: `WrapFilePair` applied to `os.Stdout`/`os.Stderr`, plus a `CI` environment variable check.
+
+- `JustStart(opts...)`: `WrapOS` with defaults and `Start` already called.
+
+## Design
+
+A single background goroutine (an actor) owns all spinner state and is the only thing that ever touches it. Every public method talks to it over a channel. Overlapping calls to the same `FrameFunc` - from a tick landing while another fetch is still in flight, for instance - are coalesced through a `singleflight.Group`. See [pkg.go.dev](https://pkg.go.dev/veitangie.dev/spinq) for the full API reference.
+
+## License
+
+Apache 2.0 - see [LICENSE](LICENSE).

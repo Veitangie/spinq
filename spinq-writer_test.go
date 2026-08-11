@@ -432,6 +432,61 @@ func TestStopNoClear_FreshFrameSetFailure_DoesNotResurrectStaleFrame(t *testing.
 	}
 }
 
+func TestStopNoClear_JoinsSlowInFlightFetchInsteadOfFetchingFresh(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+	release := make(chan struct{})
+	var callCount atomic.Int32
+	var value atomic.Pointer[string]
+	initial := "50%"
+	value.Store(&initial)
+
+	frameFn := func() ([]byte, error) {
+		callCount.Add(1)
+		v := *value.Load()
+		<-release
+		return []byte(v), nil
+	}
+
+	pair, err := WrapPair(context.Background(), shared, shared, frameFn, ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	go func() { release <- struct{}{} }()
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(shared.String(), "50%") })
+
+	ticker <- time.Now()
+	waitForCondition(t, func() bool { return callCount.Load() == 2 })
+
+	newVal := "100%"
+	value.Store(&newVal)
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- pair.Spinny.StopNoClear("") }()
+
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	var stopErr error
+	select {
+	case stopErr = <-stopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StopNoClear did not return")
+	}
+	if stopErr != nil {
+		t.Fatalf("stopNoClear: %v", stopErr)
+	}
+
+	if got := shared.String(); !strings.HasSuffix(got, "100%") {
+		t.Errorf("StopNoClear froze on a stale in-flight value instead of fetching truly fresh (callCount=%d): %q", callCount.Load(), got)
+	}
+}
+
 func TestStop_ClearWriteFailurePropagates(t *testing.T) {
 	writeErr := errors.New("stop clear boom")
 	spinny := &failAfterWriter{n: 1, err: writeErr}

@@ -76,6 +76,9 @@ func (st *spinnerState) startBackground() {
 					close(st.notifyStopped)
 					st.notifyStopped = nil
 					if !typed.clear {
+						st.revision += 1
+						st.wg.Wait()
+
 						if lastFrame, err := st.safeGetFrame(st.getFrame, st.revision); err == nil {
 							err = st.set(lastFrame)
 							if err != nil {

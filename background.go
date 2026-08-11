@@ -189,6 +189,7 @@ func (st *spinnerState) windDown() {
 	}
 	st.writerMut.Lock()
 	err := st.clear()
+	st.frame = []byte{}
 	st.writerMut.Unlock()
 	if err != nil {
 		timer := time.NewTimer(10 * time.Millisecond)

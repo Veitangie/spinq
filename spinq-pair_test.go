@@ -432,3 +432,38 @@ func TestErr_BestEffortSendDoesNotBlockCloseWhenBufferIsFull(t *testing.T) {
 		t.Errorf("expected Close to complete quickly via the best-effort (~10ms) send even with a full, undrained Err() buffer from an earlier failure, took %s", elapsed)
 	}
 }
+
+func TestWrite_AfterClose_PassesThroughWithoutResurrectingStaleFrame(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(shared.String(), "*") })
+
+	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	afterClose := shared.String()
+	if strings.HasSuffix(afterClose, "*") {
+		t.Fatalf("frame character still visible right after Close, before any post-close write: %q", afterClose)
+	}
+
+	n, err := pair.Standard.Write([]byte("goodbye\n"))
+	if err != nil {
+		t.Errorf("expected Write after Close to succeed as a plain passthrough, got %v", err)
+	}
+	if n != len("goodbye\n") {
+		t.Errorf("expected all %d bytes written, got %d", len("goodbye\n"), n)
+	}
+
+	final := shared.String()
+	if final != afterClose+"goodbye\n" {
+		t.Errorf("expected the post-Close write to reach the stream untouched; got %q", final)
+	}
+}

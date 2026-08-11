@@ -30,7 +30,8 @@ type SpinqPair struct {
 
 // Close stops the spinner, clears its display, and shuts down the
 // background actor, waiting for it to fully exit before returning. Every
-// method on Standard/Spinny called after Close returns ErrClosed.
+// spinner lifecycle management method on Standard/Spinny called after Close
+// returns ErrClosed, but Write does not get affected.
 func (sp SpinqPair) Close() {
 	sp.Spinny.close()
 }

@@ -75,7 +75,8 @@ var _ SpinqWriter = SpinqWriterReal{}
 // the spinner - so a spinner animating on the same stream as regular output
 // never gets its frame interleaved with or corrupted by that output. The
 // spinner is only redrawn if data ends in a newline, so a redraw doesn't
-// happen mid-line.
+// happen mid-line. Write is not affected by a Close call on the containing
+// SpinqPair and will continue passing writes through.
 func (sw SpinqWriterReal) Write(data []byte) (int, error) {
 	sw.st.writerMut.Lock()
 	defer sw.st.writerMut.Unlock()

@@ -63,6 +63,30 @@ func (w *failAfterWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
+type failOnCallWriter struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	call int
+	on   int
+	err  error
+}
+
+func (w *failOnCallWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.call++
+	if w.call == w.on {
+		return 0, w.err
+	}
+	return w.buf.Write(p)
+}
+
+func (w *failOnCallWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
 func staticFrame(b []byte) FrameFunc {
 	return func() ([]byte, error) {
 		return b, nil

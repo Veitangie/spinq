@@ -79,7 +79,11 @@ func (st *spinnerState) startBackground() {
 						if lastFrame, err := st.safeGetFrame(st.getFrame, st.revision); err == nil {
 							err = st.set(lastFrame)
 							if err != nil {
+								st.writerMut.Lock()
+								st.frame = []byte{}
+								st.writerMut.Unlock()
 								typed.notify <- err
+								close(typed.notify)
 								continue
 							}
 						}
@@ -87,6 +91,7 @@ func (st *spinnerState) startBackground() {
 
 					var err error
 					st.writerMut.Lock()
+					st.frame = []byte{}
 					if typed.clear {
 						err = st.clear()
 					}

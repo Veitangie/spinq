@@ -227,6 +227,40 @@ func TestStop_ClearsSpinner(t *testing.T) {
 	}
 }
 
+func TestStop_ThenWrite_DoesNotResurrectStaleFrame(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(shared.String(), "*") })
+
+	callWithTimeout(t, 2*time.Second, "Stop", func() { err = pair.Spinny.Stop() })
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	afterStop := shared.String()
+	if strings.HasSuffix(afterStop, "*") {
+		t.Fatalf("frame character still visible right after Stop: %q", afterStop)
+	}
+
+	if _, err := pair.Standard.Write([]byte("goodbye\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := shared.String(); strings.HasSuffix(got, "*") {
+		t.Errorf("stale spinner frame resurrected on screen by a post-Stop write: %q", got)
+	}
+}
+
 func TestStopWith(t *testing.T) {
 	spinny := &syncBuffer{}
 	ticker := make(chan time.Time)
@@ -283,6 +317,38 @@ func TestStopNoClear_AdoptsFreshFrameOnSuccess(t *testing.T) {
 	}
 }
 
+func TestStopNoClear_FrozenFrameIsNotRedrawnByLaterWrites(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("99%")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var stopErr error
+	callWithTimeout(t, 2*time.Second, "StopNoClear", func() { stopErr = pair.Spinny.StopNoClear(" done\n") })
+	if stopErr != nil {
+		t.Fatalf("stopNoClear: %v", stopErr)
+	}
+
+	if _, err := pair.Standard.Write([]byte("some later output\n")); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	if _, err := pair.Standard.Write([]byte("even later output\n")); err != nil {
+		t.Fatalf("write 2: %v", err)
+	}
+
+	if got := shared.String(); strings.Count(got, "99%") > 1 {
+		t.Errorf("frozen final frame was redrawn by later, unrelated writes: %q", got)
+	}
+}
+
 func TestStopNoClear_PreservesLastFrameOnFetchFailure(t *testing.T) {
 	spinny := &syncBuffer{}
 	var fail atomic.Bool
@@ -335,6 +401,34 @@ func TestStopNoClear_FreshFrameWriteFailurePropagates(t *testing.T) {
 	callWithTimeout(t, 2*time.Second, "StopNoClear", func() { stopErr = pair.Spinny.StopNoClear("") })
 	if !errors.Is(stopErr, writeErr) {
 		t.Errorf("expected StopNoClear to propagate the write failure, got %v", stopErr)
+	}
+}
+
+func TestStopNoClear_FreshFrameSetFailure_DoesNotResurrectStaleFrame(t *testing.T) {
+	writeErr := errors.New("stop redraw boom")
+	shared := &failOnCallWriter{on: 2, err: writeErr}
+
+	pair, err := WrapPair(context.Background(), shared, shared, Simple([]string{"a", "b"}), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var stopErr error
+	callWithTimeout(t, 2*time.Second, "StopNoClear", func() { stopErr = pair.Spinny.StopNoClear("") })
+	if !errors.Is(stopErr, writeErr) {
+		t.Fatalf("expected StopNoClear to propagate the write failure, got %v", stopErr)
+	}
+
+	if _, err := pair.Standard.Write([]byte("later output\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := shared.String(); strings.HasSuffix(got, "a") {
+		t.Errorf("stale pre-stop frame resurrected by a later write after StopNoClear's own redraw failed: %q", got)
 	}
 }
 

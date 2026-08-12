@@ -12,6 +12,7 @@ import (
 	"io"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -44,7 +45,7 @@ type spinnerState struct {
 
 	task     chan any
 	getFrame FrameFunc
-	running  bool
+	running  *atomic.Bool
 	revision uint64
 
 	writerMut *sync.Mutex
@@ -65,7 +66,7 @@ func (st *spinnerState) clear() error {
 
 // NOT THREAD SAFE
 func (st *spinnerState) draw() error {
-	if st.canWrite && !st.needClear && len(st.frame) != 0 {
+	if st.running.Load() && st.canWrite && !st.needClear && len(st.frame) != 0 {
 		st.needClear = true
 		_, err := st.wrapped.Write(st.frame)
 		return err
@@ -88,7 +89,11 @@ func (st *spinnerState) set(frame []byte) error {
 
 	st.frame = frame
 	st.revision += 1
-	return st.draw()
+	err = st.draw()
+	if err != nil {
+		st.frame = []byte{}
+	}
+	return err
 }
 
 func (st *spinnerState) start(ctx context.Context) error {

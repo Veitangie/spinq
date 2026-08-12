@@ -6,6 +6,7 @@ package spinq
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
 
@@ -81,22 +82,25 @@ func (sw SpinqWriterReal) Write(data []byte) (int, error) {
 	sw.st.writerMut.Lock()
 	defer sw.st.writerMut.Unlock()
 
-	err := sw.st.clear()
-	sw.st.canWrite = false
-	if err != nil {
-		return 0, err
+	if clearErr := sw.st.clear(); clearErr != nil {
+		sw.st.frame = []byte{}
+		var msg any = reportError{fmt.Errorf("failed to clear writer: %w", clearErr)}
+		go fireEvent(msg, sw.st.task)
 	}
+	sw.st.canWrite = false
 
 	written, err := sw.wrapped.Write(data)
-	if err != nil {
-		return written, err
-	}
 
 	if written > 0 && written <= len(data) {
 		sw.st.canWrite = data[written-1] == '\n'
 	}
 
-	return written, sw.st.draw()
+	if drawErr := sw.st.draw(); drawErr != nil {
+		sw.st.frame = []byte{}
+		var msg any = reportError{fmt.Errorf("failed to draw spinner back: %w", drawErr)}
+		go fireEvent(msg, sw.st.task)
+	}
+	return written, err
 }
 
 func (sw SpinqWriterReal) Start(ctx context.Context) error {

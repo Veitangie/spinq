@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -44,6 +45,18 @@ type errWriter struct{ err error }
 
 func (w errWriter) Write(p []byte) (int, error) {
 	return 0, w.err
+}
+
+type flakyWriter struct {
+	n   atomic.Int64
+	err error
+}
+
+func (w *flakyWriter) Write(p []byte) (int, error) {
+	if w.n.Add(1)%2 == 0 {
+		return 0, w.err
+	}
+	return len(p), nil
 }
 
 type failAfterWriter struct {

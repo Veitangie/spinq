@@ -5,6 +5,7 @@ package spinq
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -359,4 +360,43 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	}
 
 	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+}
+
+func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
+	w := &flakyWriter{err: errors.New("boom")}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), w, w, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Go(func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = pair.Spinny.Write([]byte("x\n"))
+			}
+		}
+	})
+
+	for range 2000 {
+		_ = pair.Spinny.StopNoClear("")
+		_ = pair.Spinny.Start(context.Background())
+	}
+
+	close(stop)
+	if !waitTimeout(&wg, 5*time.Second) {
+		t.Fatalf("writer goroutine did not finish — goroutine dump:\n%s", dumpGoroutines())
+	}
 }

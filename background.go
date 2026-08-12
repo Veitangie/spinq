@@ -5,6 +5,7 @@
 package spinq
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"time"
@@ -31,6 +32,22 @@ type drawFrame struct {
 	frame    []byte
 }
 
+type reportError struct {
+	err error
+}
+
+func fireEvent[T any](t T, chT chan<- T) {
+	timer := time.NewTimer(10 * time.Millisecond)
+	defer func() {
+		_ = recover()
+		timer.Stop()
+	}()
+	select {
+	case chT <- t:
+	case <-timer.C:
+	}
+}
+
 func (st *spinnerState) startBackground() {
 	go func() {
 		defer close(st.closed)
@@ -45,90 +62,72 @@ func (st *spinnerState) startBackground() {
 
 				switch typed := task.(type) {
 				case start:
-					if st.running {
+					if st.running.Load() {
 						typed.notify <- ErrAlreadyRunning
 						close(typed.notify)
 						continue
 					}
 
 					frame, err := st.safeGetFrame(st.getFrame, st.revision)
-					st.running = true
+					st.running.Store(true)
 					st.notifyStopped = typed.notifyStopped
 
 					if err == nil {
 						err = st.set(frame)
-						st.running = err == nil
-					} else {
-						st.writerMut.Lock()
-						err = st.draw()
-						st.writerMut.Unlock()
+						if err != nil {
+							st.stopFromBg()
+							typed.notify <- err
+						}
 					}
-					typed.notify <- err
 					close(typed.notify)
 
 				case stop:
-					if !st.running {
+					if !st.running.Load() {
 						close(typed.notify)
 						continue
 					}
 
-					st.running = false
-					close(st.notifyStopped)
-					st.notifyStopped = nil
+					st.stopFromBg()
+					lastFrame := typed.lastFrame
+					prefix := []byte{}
 					if !typed.clear {
 						st.revision += 1
 						st.wg.Wait()
 
-						if lastFrame, err := st.safeGetFrame(st.getFrame, st.revision); err == nil {
-							err = st.set(lastFrame)
-							if err != nil {
-								st.writerMut.Lock()
-								st.frame = []byte{}
-								st.writerMut.Unlock()
-								typed.notify <- err
-								close(typed.notify)
-								continue
-							}
+						if maybePrefix, err := st.safeGetFrame(st.getFrame, st.revision); err == nil {
+							prefix = maybePrefix
 						}
 					}
 
 					var err error
 					st.writerMut.Lock()
+					if len(prefix) != 0 && !bytes.Equal(prefix, st.frame) {
+						lastFrame = append(prefix, lastFrame...)
+						typed.clear = true
+					}
+
+					if typed.clear && st.needClear {
+						lastFrame = append(clearBytes, lastFrame...)
+						st.needClear = false
+					}
 					st.frame = []byte{}
-					if typed.clear {
-						err = st.clear()
-					}
 
-					if err != nil {
-						st.writerMut.Unlock()
-						typed.notify <- err
-						close(typed.notify)
-						continue
-					}
-
-					if len(typed.lastFrame) != 0 {
-						_, err = st.wrapped.Write(typed.lastFrame)
+					if len(lastFrame) != 0 {
+						_, err = st.wrapped.Write(lastFrame)
 					}
 					st.writerMut.Unlock()
 					typed.notify <- err
 					close(typed.notify)
 
 				case drawFrame:
-					if !st.running || typed.revision != st.revision {
+					if !st.running.Load() || typed.revision != st.revision {
 						continue
 					}
 
 					err := st.set(typed.frame)
 					if err != nil {
-						st.running = false
-						close(st.notifyStopped)
-						st.notifyStopped = nil
-						timer := time.NewTimer(10 * time.Millisecond)
-
-						select {
-						case st.errCh <- fmt.Errorf("failed to draw frame, stopping: %w", err):
-						case <-timer.C:
-						}
+						st.stopFromBg()
+						fireEvent(fmt.Errorf("failed to draw frame, stopping: %w", err), st.errCh)
 					}
 
 				case setGetFrame:
@@ -144,25 +143,26 @@ func (st *spinnerState) startBackground() {
 
 					st.wg.Wait()
 
-					if st.running {
+					if st.running.Load() {
 						frame, err := st.safeGetFrame(st.getFrame, st.revision)
 						if err == nil {
 							err = st.set(frame)
-							st.running = err == nil
 							if err != nil {
-								close(st.notifyStopped)
-								st.notifyStopped = nil
+								st.stopFromBg()
 							}
 							typed.notify <- err
 						}
 					}
 
 					close(typed.notify)
+				case reportError:
+					st.stopFromBg()
+					fireEvent(typed.err, st.errCh)
 				default:
 					continue
 				}
 			case <-st.ticker:
-				if !st.running {
+				if !st.running.Load() {
 					continue
 				}
 
@@ -189,22 +189,27 @@ func (st *spinnerState) startBackground() {
 	}()
 }
 
+// NOT THREAD SAFE
 func (st *spinnerState) windDown() {
-	st.running = false
+	st.running.Store(false)
 	if st.notifyStopped != nil {
 		close(st.notifyStopped)
 		st.notifyStopped = nil
 	}
 	st.writerMut.Lock()
 	err := st.clear()
-	st.frame = []byte{}
 	st.writerMut.Unlock()
 	if err != nil {
-		timer := time.NewTimer(10 * time.Millisecond)
-		select {
-		case st.errCh <- fmt.Errorf("failed to clear before closing: %w", err):
-		case <-timer.C:
-		}
+		fireEvent(err, st.errCh)
 	}
 	close(st.errCh)
+}
+
+// NOT THREAD SAFE
+func (st *spinnerState) stopFromBg() {
+	st.running.Store(false)
+	if st.notifyStopped != nil {
+		close(st.notifyStopped)
+		st.notifyStopped = nil
+	}
 }

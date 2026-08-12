@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -100,6 +101,7 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 		task:      make(chan any),
 		ticker:    ticker,
 		getFrame:  getFrame,
+		running:   &atomic.Bool{},
 		canWrite:  true,
 		ctx:       withCancel,
 		close:     cancel,

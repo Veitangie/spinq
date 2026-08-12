@@ -186,6 +186,67 @@ func TestStart_DrawsInitialFrameImmediately(t *testing.T) {
 	}
 }
 
+func TestStart_DrawsInitialFrameEvenIfEqualToFrameFromPriorRun(t *testing.T) {
+	spinny := &syncBuffer{}
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, staticFrame([]byte("X")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start 1: %v", err)
+	}
+	waitForCondition(t, func() bool { return spinny.Len() > 0 })
+
+	callWithTimeout(t, 2*time.Second, "Stop", func() { err = pair.Spinny.Stop() })
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	spinny.Reset()
+	callWithTimeout(t, 2*time.Second, "Start2", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start 2: %v", err)
+	}
+
+	if got := spinny.String(); got != "X" {
+		t.Errorf("expected the restarted spinner to draw its first frame even though it matches the frame from before Stop, got %q", got)
+	}
+}
+
+func TestStop_DoesNotLeaveNeedClearStaleForLaterWrite(t *testing.T) {
+	shared := &syncBuffer{}
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("X")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return shared.Len() > 0 })
+
+	callWithTimeout(t, 2*time.Second, "Stop", func() { err = pair.Spinny.Stop() })
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	afterStop := shared.String()
+
+	if _, err := pair.Standard.Write([]byte("hi\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if want := afterStop + "hi\n"; shared.String() != want {
+		t.Errorf("write after Stop redundantly re-cleared an already-blank line, got %q, want %q", shared.String(), want)
+	}
+}
+
 func TestStop_WithoutStart(t *testing.T) {
 	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
 	if err != nil {
@@ -314,6 +375,39 @@ func TestStopNoClear_AdoptsFreshFrameOnSuccess(t *testing.T) {
 
 	if got := spinny.String(); !strings.HasSuffix(got, "99%") {
 		t.Errorf("expected StopNoClear to adopt the freshest frame before freezing, got %q", got)
+	}
+}
+
+func TestStopNoClear_RedrawsFreshFrameInPlaceOverOldOne(t *testing.T) {
+	spinny := &syncBuffer{}
+	var frame atomic.Pointer[[]byte]
+	first := []byte("1%")
+	frame.Store(&first)
+	frameFn := func() ([]byte, error) { return *frame.Load(), nil }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, frameFn, make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	before := spinny.String()
+
+	second := []byte("99%")
+	frame.Store(&second)
+
+	var stopErr error
+	callWithTimeout(t, 2*time.Second, "StopNoClear", func() { stopErr = pair.Spinny.StopNoClear("") })
+	if stopErr != nil {
+		t.Fatalf("stopNoClear: %v", stopErr)
+	}
+
+	if want := before + string(clearBytes) + "99%"; spinny.String() != want {
+		t.Errorf("expected the fresh frame to clear and replace the old one in place, got %q, want %q", spinny.String(), want)
 	}
 }
 
@@ -707,11 +801,12 @@ func TestWrite_PropagatesUnderlyingError(t *testing.T) {
 	}
 }
 
-func TestWrite_ClearFailurePropagates(t *testing.T) {
+func TestWrite_ClearFailureDoesNotAbortPayloadWrite(t *testing.T) {
 	writeErr := errors.New("write-clear boom")
 	spinny := &failAfterWriter{n: 1, err: writeErr}
+	main := &syncBuffer{}
 
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, staticFrame([]byte("*")), make(chan time.Time))
+	pair, err := WrapPair(context.Background(), main, spinny, staticFrame([]byte("*")), make(chan time.Time))
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
@@ -720,8 +815,128 @@ func TestWrite_ClearFailurePropagates(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	if _, err := pair.Standard.Write([]byte("hi\n")); !errors.Is(err, writeErr) {
-		t.Errorf("expected Write to propagate the clear failure, got %v", err)
+	n, err := pair.Standard.Write([]byte("hi\n"))
+	if err != nil {
+		t.Fatalf("expected the payload write to succeed despite the clear failure, got %v", err)
+	}
+	if n != len("hi\n") {
+		t.Errorf("expected 3 bytes written, got %d", n)
+	}
+	if got := main.String(); got != "hi\n" {
+		t.Errorf("expected payload on main writer, got %q", got)
+	}
+
+	select {
+	case gotErr := <-pair.Err():
+		if !errors.Is(gotErr, writeErr) {
+			t.Errorf("expected the clear failure to surface on Err(), got %v", gotErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the clear failure to be reported on Err()")
+	}
+}
+
+func TestWriteError_AutoStopDoesNotResurrectStaleFrameOnLaterWrite(t *testing.T) {
+	writeErr := errors.New("boom")
+	w := &failOnCallWriter{on: 2, err: writeErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), w, w, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(w.String(), "*") })
+
+	if _, err := pair.Spinny.Write([]byte("partial")); err != nil {
+		t.Fatalf("expected payload write to succeed despite clear failure, got %v", err)
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	if _, err := pair.Spinny.Write([]byte("hello\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if got := w.String(); strings.Count(got, "*") > 1 {
+		t.Errorf("stale frame resurrected by a write after write-error auto-stop: %q", got)
+	}
+}
+
+func TestWriteError_AutoStopClosesNotifyStoppedWatcher(t *testing.T) {
+	const marker = "spinnerState).start.func1"
+	countMarker := func() int { return strings.Count(dumpGoroutines(), marker) }
+
+	var baseline int
+	waitForCondition(t, func() bool {
+		a := countMarker()
+		time.Sleep(20 * time.Millisecond)
+		b := countMarker()
+		baseline = b
+		return a == b
+	})
+
+	writeErr := errors.New("boom")
+	w := &failOnCallWriter{on: 2, err: writeErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), w, w, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(w.String(), "*") })
+	waitForCondition(t, func() bool { return countMarker() == baseline+1 })
+
+	_, _ = pair.Spinny.Write([]byte("hello\n"))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && countMarker() != baseline {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := countMarker(); got != baseline {
+		t.Errorf("ctx-watcher goroutine from Start still alive after write-error auto-stop (marker count=%d, baseline=%d): notifyStopped was not closed", got, baseline)
+	}
+}
+
+func TestWrite_DrawFailureReportsTheDrawError(t *testing.T) {
+	drawErr := errors.New("draw boom")
+	w := &failOnCallWriter{on: 4, err: drawErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), w, w, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer pair.Close()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	waitForCondition(t, func() bool { return strings.Contains(w.String(), "*") })
+
+	if _, err := pair.Spinny.Write([]byte("hi\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	select {
+	case gotErr := <-pair.Err():
+		if !errors.Is(gotErr, drawErr) {
+			t.Errorf("expected the reported error to wrap the draw failure, got %v", gotErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the draw failure to be reported on Err()")
 	}
 }
 

@@ -256,6 +256,19 @@ func MinimalBarOptions() BarOptions {
 	}
 }
 
+// ThinBarOptions returns a preset BarOptions styled as "▰▰▰▱▱▱", with
+// no brackets.
+func ThinBarOptions() BarOptions {
+	return BarOptions{
+		Start:     "",
+		Full:      "▰",
+		Divider:   "▰",
+		Empty:     "▱",
+		End:       "",
+		Direction: Right,
+	}
+}
+
 // BarOptionsFunc configures a BarOptions value.
 type BarOptionsFunc func(BarOptions) BarOptions
 

@@ -37,6 +37,7 @@ type spinnerState struct {
 	sg      *singleflight.Group
 	wg      *sync.WaitGroup
 	errCh   chan<- error
+	cd      clearerDrawer
 
 	ctx           context.Context
 	close         context.CancelFunc
@@ -56,22 +57,12 @@ type spinnerState struct {
 
 // NOT THREAD SAFE
 func (st *spinnerState) clear() error {
-	if st.needClear {
-		st.needClear = false
-		_, err := st.wrapped.Write(clearBytes)
-		return err
-	}
-	return nil
+	return st.cd.clear(st)
 }
 
 // NOT THREAD SAFE
 func (st *spinnerState) draw() error {
-	if st.running.Load() && st.canWrite && !st.needClear && len(st.frame) != 0 {
-		st.needClear = true
-		_, err := st.wrapped.Write(st.frame)
-		return err
-	}
-	return nil
+	return st.cd.draw(st)
 }
 
 // NOT THREAD SAFE
@@ -89,6 +80,7 @@ func (st *spinnerState) set(frame []byte) error {
 
 	st.frame = frame
 	st.revision += 1
+	st.cd.adjust(st)
 	err = st.draw()
 	if err != nil {
 		st.frame = []byte{}

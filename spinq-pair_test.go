@@ -12,7 +12,22 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 )
+
+func openTestPTY(t *testing.T) *os.File {
+	t.Helper()
+	master, tty, err := pty.Open()
+	if err != nil {
+		t.Skipf("pty.Open: %v (platform without PTY support?)", err)
+	}
+	t.Cleanup(func() {
+		_ = tty.Close()
+		_ = master.Close()
+	})
+	return tty
+}
 
 func TestWrapPair_Errors(t *testing.T) {
 	frame := staticFrame([]byte("*"))
@@ -83,6 +98,149 @@ func TestWrapPair_SpinnyFallsBackToMain(t *testing.T) {
 	}
 }
 
+func TestWrapWithResizeDetection_SetsSigwinChAndGetWidth(t *testing.T) {
+	sigwinCh := make(chan struct{})
+	getWidth := func() int { return 42 }
+
+	opt := WrapWithResizeDetection(sigwinCh, getWidth)(WrapOptions{})
+
+	if opt.SigwinCh == nil {
+		t.Error("expected SigwinCh to be set")
+	}
+	if opt.GetWidth == nil || opt.GetWidth() != 42 {
+		t.Error("expected GetWidth to be set to the provided function")
+	}
+}
+
+func TestWrapWithResizeDetection_NilArgsAreANoop(t *testing.T) {
+	sigwinCh := make(chan struct{})
+	getWidth := func() int { return 42 }
+
+	t.Run("nil sigwinCh", func(t *testing.T) {
+		opt := WrapWithResizeDetection(nil, getWidth)(WrapOptions{})
+		if opt.SigwinCh != nil || opt.GetWidth != nil {
+			t.Errorf("expected a no-op, got %+v", opt)
+		}
+	})
+
+	t.Run("nil getWidth", func(t *testing.T) {
+		opt := WrapWithResizeDetection(sigwinCh, nil)(WrapOptions{})
+		if opt.SigwinCh != nil || opt.GetWidth != nil {
+			t.Errorf("expected a no-op, got %+v", opt)
+		}
+	})
+}
+
+func TestWrapWithUnmanagedResizeDetection_SetsGetWidthClearsSigwinCh(t *testing.T) {
+	getWidth := func() int { return 42 }
+
+	opt := WrapWithUnmanagedResizeDetection(getWidth)(WrapOptions{SigwinCh: make(chan struct{})})
+
+	if opt.SigwinCh != nil {
+		t.Error("expected SigwinCh to be cleared")
+	}
+	if opt.GetWidth == nil || opt.GetWidth() != 42 {
+		t.Error("expected GetWidth to be set to the provided function")
+	}
+}
+
+func TestWrapWithUnmanagedResizeDetection_NilGetWidthIsANoop(t *testing.T) {
+	existingSigwinCh := make(chan struct{})
+	opt := WrapWithUnmanagedResizeDetection(nil)(WrapOptions{SigwinCh: existingSigwinCh})
+
+	if opt.SigwinCh != (<-chan struct{})(existingSigwinCh) {
+		t.Error("expected an existing SigwinCh to be left untouched by a nil getWidth")
+	}
+	if opt.GetWidth != nil {
+		t.Error("expected GetWidth to stay unset")
+	}
+}
+
+func TestWrapPair_ResizeDetectionOption_UsesAwareClearerDrawer(t *testing.T) {
+	sigwinCh := make(chan struct{})
+	getWidth := func() int { return 42 }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(sigwinCh, getWidth))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
+		t.Errorf("expected an *awareClearerDrawer when both SigwinCh and GetWidth are set, got %T", asReal(t, pair.Spinny).st.cd)
+	}
+}
+
+func TestWrapPair_ResizeDetectionOption_UsesLiveGetWidthNotRawGetWidth(t *testing.T) {
+	sigwinCh := make(chan struct{}, 1)
+	width := &atomic.Int64{}
+	width.Store(40)
+	getWidth := func() int { return int(width.Load()) }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(sigwinCh, getWidth))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	aware, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer)
+	if !ok {
+		t.Fatalf("expected *awareClearerDrawer, got %T", asReal(t, pair.Spinny).st.cd)
+	}
+	if got := aware.getWidth(); got != 40 {
+		t.Fatalf("expected initial width 40, got %d", got)
+	}
+
+	width.Store(80)
+	if got := aware.getWidth(); got != 40 {
+		t.Errorf("expected the managed getWidth to stay cached at 40 without a sigwinCh signal (proving it's LiveGetWidth-wrapped, not the raw getWidth passed through directly), got %d", got)
+	}
+}
+
+func TestWrapPair_PartialResizeDetectionOption(t *testing.T) {
+	t.Run("only sigwinCh set stays oblivious", func(t *testing.T) {
+		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(make(chan struct{}), nil))
+		if err != nil {
+			t.Fatalf("WrapPair: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(obliviousClearerDrawer); !ok {
+			t.Errorf("expected an obliviousClearerDrawer when GetWidth is nil, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
+
+	t.Run("only getWidth set uses unmanaged awareClearerDrawer", func(t *testing.T) {
+		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithUnmanagedResizeDetection(func() int { return 1 }))
+		if err != nil {
+			t.Fatalf("WrapPair: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
+			t.Errorf("expected an *awareClearerDrawer (unmanaged mode) when only GetWidth is set, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
+
+	t.Run("neither set", func(t *testing.T) {
+		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+		if err != nil {
+			t.Fatalf("WrapPair: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(obliviousClearerDrawer); !ok {
+			t.Errorf("expected an obliviousClearerDrawer by default, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
+}
+
+func TestWrapFilePair_BothFilesNilErrors(t *testing.T) {
+	if _, err := WrapFilePair(context.Background(), nil, nil, staticFrame([]byte("*")), make(chan time.Time)); err == nil {
+		t.Error("expected an error when both main and spinny are nil")
+	}
+}
+
 func TestWrapFilePair_NilFrameFuncErrors(t *testing.T) {
 	if _, err := WrapFilePair(context.Background(), os.Stdout, os.Stderr, nil, make(chan time.Time)); err == nil {
 		t.Error("expected an error for a nil FrameFunc")
@@ -95,28 +253,24 @@ func TestWrapFilePair_NilTickerErrors(t *testing.T) {
 	}
 }
 
-func TestWrapFilePair_SpinnyStatErrorPropagates(t *testing.T) {
+func TestWrapFilePair_ClosedSpinnyFallsBackToPassthrough(t *testing.T) {
 	spinny, err := os.CreateTemp(t.TempDir(), "spinny")
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
 	_ = spinny.Close()
 
-	if _, err := WrapFilePair(context.Background(), os.Stdout, spinny, staticFrame([]byte("*")), make(chan time.Time)); err == nil {
-		t.Error("expected an error when spinny.Stat() fails")
+	pair, err := WrapFilePair(context.Background(), os.Stdout, spinny, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapFilePair: %v", err)
+	}
+	if _, ok := pair.Spinny.(SpinqWriterPassthrough); !ok {
+		t.Errorf("expected Spinny to fall back to a passthrough writer for a closed fd, got %T", pair.Spinny)
 	}
 }
 
-func TestWrapFilePair_MainStatErrorPropagates(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires a POSIX character device (/dev/null)")
-	}
-
-	spinny, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatalf("open %s: %v", os.DevNull, err)
-	}
-	defer func() { _ = spinny.Close() }()
+func TestWrapFilePair_ClosedMainFallsBackToPassthroughForStandardOnly(t *testing.T) {
+	spinny := openTestPTY(t)
 
 	main, err := os.CreateTemp(t.TempDir(), "main")
 	if err != nil {
@@ -124,8 +278,17 @@ func TestWrapFilePair_MainStatErrorPropagates(t *testing.T) {
 	}
 	_ = main.Close()
 
-	if _, err := WrapFilePair(context.Background(), main, spinny, staticFrame([]byte("*")), make(chan time.Time)); err == nil {
-		t.Error("expected an error when main.Stat() fails")
+	pair, err := WrapFilePair(context.Background(), main, spinny, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapFilePair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
+
+	if _, ok := pair.Standard.(SpinqWriterPassthrough); !ok {
+		t.Errorf("expected Standard to fall back to a passthrough writer for a closed fd, got %T", pair.Standard)
+	}
+	if _, ok := pair.Spinny.(SpinqWriterReal); !ok {
+		t.Errorf("expected Spinny to stay a real spinner writer when it is a terminal, got %T", pair.Spinny)
 	}
 }
 
@@ -160,11 +323,7 @@ func TestWrapFilePair_SpinnyNotTerminalDisablesBoth(t *testing.T) {
 }
 
 func TestWrapFilePair_MainNotTerminalDisablesOnlyStandard(t *testing.T) {
-	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatalf("open %s: %v", os.DevNull, err)
-	}
-	defer func() { _ = devNull.Close() }()
+	spinnyTTY := openTestPTY(t)
 
 	main, err := os.CreateTemp(t.TempDir(), "main")
 	if err != nil {
@@ -172,7 +331,7 @@ func TestWrapFilePair_MainNotTerminalDisablesOnlyStandard(t *testing.T) {
 	}
 	defer func() { _ = main.Close() }()
 
-	pair, err := WrapFilePair(context.Background(), main, devNull, staticFrame([]byte("*")), make(chan time.Time))
+	pair, err := WrapFilePair(context.Background(), main, spinnyTTY, staticFrame([]byte("*")), make(chan time.Time))
 	if err != nil {
 		t.Fatalf("WrapFilePair: %v", err)
 	}
@@ -189,19 +348,10 @@ func TestWrapFilePair_MainNotTerminalDisablesOnlyStandard(t *testing.T) {
 }
 
 func TestWrapFilePair_BothTerminalsKeepsBothReal(t *testing.T) {
-	mainNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatalf("open %s: %v", os.DevNull, err)
-	}
-	defer func() { _ = mainNull.Close() }()
+	mainTTY := openTestPTY(t)
+	spinnyTTY := openTestPTY(t)
 
-	spinnyNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatalf("open %s: %v", os.DevNull, err)
-	}
-	defer func() { _ = spinnyNull.Close() }()
-
-	pair, err := WrapFilePair(context.Background(), mainNull, spinnyNull, staticFrame([]byte("*")), make(chan time.Time))
+	pair, err := WrapFilePair(context.Background(), mainTTY, spinnyTTY, staticFrame([]byte("*")), make(chan time.Time))
 	if err != nil {
 		t.Fatalf("WrapFilePair: %v", err)
 	}

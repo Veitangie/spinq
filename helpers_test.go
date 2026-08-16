@@ -121,7 +121,7 @@ func errorFrame(err error) FrameFunc {
 	}
 }
 
-func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool { //nolint:unparam // kept general-purpose even though every current caller passes the same value
+func waitTimeout(wg *sync.WaitGroup, timeout time.Duration) bool { //nolint:unparam
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -146,7 +146,7 @@ func dumpGoroutines() string {
 	}
 }
 
-func callWithTimeout(t *testing.T, timeout time.Duration, name string, fn func()) { //nolint:unparam // kept general-purpose even though every current caller passes the same value
+func callWithTimeout(t *testing.T, timeout time.Duration, name string, fn func()) { //nolint:unparam
 	t.Helper()
 	done := make(chan struct{})
 	go func() {

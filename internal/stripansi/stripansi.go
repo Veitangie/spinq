@@ -13,3 +13,7 @@ var re = regexp.MustCompile(ansi)
 func Strip(str string) string {
 	return re.ReplaceAllString(str, "")
 }
+
+func StripBytes(source []byte) []byte {
+	return re.ReplaceAll(source, []byte{})
+}

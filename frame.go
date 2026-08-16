@@ -365,3 +365,36 @@ func Join(sep string, fs ...FrameFunc) FrameFunc {
 		return bytes.Join(cache, sepBytes), nil
 	}
 }
+
+// WidthFunc builds a fresh FrameFunc for a given terminal width - see
+// Dynamic. BarRender/SmoothBarRender's length parameter is usually what a
+// WidthFunc closes over to produce a correctly-sized render pipeline.
+type WidthFunc func(width int) FrameFunc
+
+// Dynamic returns a FrameFunc that rebuilds itself via build whenever
+// getWidth's value changes, so the resulting content (e.g. a progress bar)
+// tracks the terminal's current width instead of a size fixed at
+// construction. build is only called again on an actual change - between
+// changes, Dynamic just keeps calling the FrameFunc build last returned, so
+// animated/progressing content (a moving spinner, an advancing percentage)
+// keeps updating every call, not just on resize.
+//
+// getWidth is called on every call to the returned FrameFunc - once per
+// frame render, which spinq treats as a hot path. Always pass the func
+// LiveGetWidth returns here, never a raw syscall-backed getWidth directly:
+// LiveGetWidth is what makes this cheap, both for a single Dynamic instance
+// and for however many are joined together in one frame, since they can all
+// share its output rather than each paying for their own real query.
+func Dynamic(getWidth func() int, build WidthFunc) FrameFunc {
+	width := getWidth()
+	current := build(width)
+
+	return func() ([]byte, error) {
+		newWidth := getWidth()
+		if newWidth != width {
+			width = newWidth
+			current = build(width)
+		}
+		return current()
+	}
+}

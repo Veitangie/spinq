@@ -319,7 +319,7 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	var counter int
 	gate := make(chan struct{})
 
-	getFrame := func() ([]byte, error) { //nolint:unparam // signature fixed by FrameFunc
+	getFrame := func() ([]byte, error) { //nolint:unparam
 		if callCount.Add(1) == 1 {
 			counter++
 			return fmt.Appendf(nil, "%d", counter), nil

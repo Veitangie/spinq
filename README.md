@@ -125,7 +125,7 @@ Both examples live in [`examples/`](examples/) and run as-is with `go run .`.
 
 Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
 
-- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq has two direct dependencies: [`go-runewidth`](https://github.com/mattn/go-runewidth), for correct terminal cell-width math (so bars and dividers actually line up with wide/multi-byte glyphs), and `golang.org/x/sync`, for the concurrency primitive that keep `FrameFunc` calls serialized. Everything else is standard library.
+- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq ships six direct dependencies, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) and [`uax29`](https://github.com/clipperhouse/uax29) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), `golang.org/x/term` for terminal-size queries, and `golang.org/x/sync` for the concurrency primitive that keeps `FrameFunc` calls serialized. Everything else is standard library.
 
 - **Forcing the user to give up the stdout/stderr split.** A lot of spinner libraries want to *own* the output - you print through their writer, or not at all, and the Unix convention of "stdout is data, stderr is status" is not supported. spinq still needs you to write through its writers. But spinq keeps both streams separate and independently addressable: `pair.Standard` and `pair.Spinny` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them instead of collapsing them into one.
 
@@ -139,15 +139,15 @@ spinq is meant to be lightweight and easy to use, so it comes with some restrict
 
 - **No raw/true TTY mode.** spinq never puts the terminal into raw mode, never reads input, and isn't a TUI framework. It's a simple ANSI-writing `io.Writer`. For when you need something to just spin.
 
-- **No terminal width detection.** Bar widths are explicit `int` arguments, always. spinq never queries `$COLUMNS` or an ioctl to auto-fit. The only way to get any semblance of responsive design is to measure the size yourself and pass the result in.
+- **No automatic width detection.** Bar widths are explicit `int` arguments by default - spinq never queries the terminal size on its own. If you want responsive bars, that's an explicit opt-in: wire up a `getWidth` (see `WidthFromFile`), and use `DynamicBarRender`/`DynamicSmoothBarRender` to render at a fraction of the current width instead of a fixed one - or `Dynamic` directly, for anything that isn't a bar.
 
-- **No resize handling.** A bar sized for one width doesn't adapt if the terminal resizes mid-run. There's no way to do this safely without a signal handler that knows to stop the spinner, clear correctly, and restart - and that's application-specific behavior, not something spinq wants to touch. You can register your own `SIGWINCH` handler if you need this.
+- **No automatic resize handling.** A bar sized for one width doesn't adapt mid-run unless you opt in. `WithResizeDetection`/`WrapWithResizeDetection` clear and re-crop safely on a real resize event, backed by `DefaultSigwinch` (real `SIGWINCH`) or `SigwinchFromPoller` (for platforms without one, like Windows); `WithDefaultResizeDetection`/`WrapWithDefaultResizeDetection` wire up sensible platform defaults with zero configuration. Still off unless you ask for it.
 
 - **No multiline or multi-bar dashboards.** spinq can only manage one line. If you want several concurrent progress bars stacked on screen, spinq is not a good choice.
 
 - **No color.** spinq never emits color itself - `Static`, `Duration`, and friends render plain text. A handful of ANSI color constants (`Red`, `Green`, ...) are exported as a convenience if you want to build your own colored `FrameFunc`, but the choice is entirely yours.
 
-- **No terminal capability negotiation.** Detection is a single check - is this stream a character device - not terminfo/termcap parsing or fallback rendering for non-ANSI terminals.
+- **Minimal terminal capability negotiation.** Detection is `isatty`-based (a real terminal vs. redirected/piped output, including Cygwin/MSYS2 ptys) rather than terminfo/termcap parsing or fallback rendering for genuinely non-ANSI terminals - though output is wrapped through `go-colorable` on Windows, so ANSI sequences render correctly there too instead of printing as literal escape-code garbage.
 
 ## Install
 
@@ -237,13 +237,24 @@ frame := spinq.Join("",
 
 `JustStart` wraps `WrapOS`, which wraps `WrapFilePair`, which wraps `WrapPair` - each layer adds one piece of default behavior, and each is exported if you need less of it:
 
-- `WrapPair(ctx, main, spinny, getFrame, ticker)`: the primitive. Takes any two `io.Writer`s, no TTY detection at all.
+- `WrapPair(ctx, main, spinny, getFrame, ticker, opts...)`: the primitive. Takes any two `io.Writer`s, no TTY detection at all.
 
-- `WrapFilePair(ctx, main, spinny *os.File, ...)`: adds the character-device check, falling back to a passthrough for non-terminal files.
+- `WrapFilePair(ctx, main, spinny *os.File, ..., opts...)`: adds the character-device check, falling back to a passthrough for non-terminal files.
 
-- `WrapOS(ctx, getFrame, ticker)`: `WrapFilePair` applied to `os.Stdout`/`os.Stderr`, plus a `CI` environment variable check.
+- `WrapOS(ctx, getFrame, ticker, opts...)`: `WrapFilePair` applied to `os.Stdout`/`os.Stderr`, plus a `CI` environment variable check.
 
 - `JustStart(opts...)`: `WrapOS` with defaults and `Start` already called.
+
+Every layer takes `WrapOptionsFunc`s (`JustStart` takes the equivalent `JustStartOptionsFunc`s) for resize detection - not just `JustStart`. `WrapWithDefaultResizeDetection` wires up sensible platform defaults with zero configuration at any of them:
+
+```go
+pair, err := spinq.WrapOS(
+	context.Background(),
+	getFrame,
+	spinq.Every(100*time.Millisecond),
+	spinq.WrapWithDefaultResizeDetection(context.Background()),
+)
+```
 
 ## Design
 

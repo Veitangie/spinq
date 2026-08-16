@@ -137,6 +137,35 @@ func TestProgress_IntegratesWithJoinPreservingLastGoodSegment(t *testing.T) {
 	}
 }
 
+func TestProgress_CurrentEqualsTotalIsValidNotAnError(t *testing.T) {
+	f := Progress(func() (int, int) { return 10, 10 }, func(current, total int) []byte {
+		return []byte("done")
+	})
+
+	got, err := f()
+	if err != nil {
+		t.Fatalf("unexpected error at current == total: %v", err)
+	}
+	if string(got) != "done" {
+		t.Errorf("expected %q, got %q", "done", got)
+	}
+}
+
+func TestJoin_NoNilsFastPathAliasesInputSlice(t *testing.T) {
+	fs := []FrameFunc{Static("a"), Static("b")}
+	f := Join(" ", fs...)
+
+	fs[0] = Static("replaced")
+
+	got, err := f()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "replaced b" {
+		t.Errorf("expected the fast path to alias fs (observing the post-construction replacement), got %q", got)
+	}
+}
+
 func TestJoin_KeepsNonNilFuncsWhenSomeAreNil(t *testing.T) {
 	f := Join(" ", Static("a"), nil, Static("b"))
 
@@ -610,5 +639,94 @@ func TestSurrounded_PropagatesDelegateError(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected no bytes on error, got %q", got)
+	}
+}
+
+func TestDynamic_UsesInitialWidthUpfront(t *testing.T) {
+	var gotWidth int
+	f := Dynamic(func() int { return 40 }, func(width int) FrameFunc {
+		gotWidth = width
+		return Static("x")
+	})
+
+	if _, err := f(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotWidth != 40 {
+		t.Errorf("expected build to be called with the initial width 40, got %d", gotWidth)
+	}
+}
+
+func TestDynamic_DoesNotRebuildWithoutAWidthChange(t *testing.T) {
+	builds := 0
+	f := Dynamic(func() int { return 40 }, func(width int) FrameFunc {
+		builds++
+		return Static("x")
+	})
+
+	for range 5 {
+		if _, err := f(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if builds != 1 {
+		t.Errorf("expected build to be called exactly once across unchanged-width calls, got %d", builds)
+	}
+}
+
+func TestDynamic_RebuildsOnWidthChange(t *testing.T) {
+	width := 40
+	builds := []int{}
+	f := Dynamic(func() int { return width }, func(w int) FrameFunc {
+		builds = append(builds, w)
+		return Static("x")
+	})
+
+	if _, err := f(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	width = 80
+	if _, err := f(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	width = 80
+	if _, err := f(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []int{40, 80}
+	if !slices.Equal(builds, want) {
+		t.Errorf("expected build calls %v, got %v", want, builds)
+	}
+}
+
+func TestDynamic_InnerFrameFuncKeepsAdvancingBetweenRebuilds(t *testing.T) {
+	f := Dynamic(func() int { return 40 }, func(width int) FrameFunc {
+		return Simple([]string{"a", "b", "c"})
+	})
+
+	var got []string
+	for range 4 {
+		frame, err := f()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		got = append(got, string(frame))
+	}
+
+	want := []string{"a", "b", "c", "a"}
+	if !slices.Equal(got, want) {
+		t.Errorf("expected the inner FrameFunc to keep advancing across calls, got %v want %v", got, want)
+	}
+}
+
+func TestDynamic_PropagatesInnerFrameFuncError(t *testing.T) {
+	wantErr := errors.New("boom")
+	f := Dynamic(func() int { return 40 }, func(width int) FrameFunc {
+		return errorFrame(wantErr)
+	})
+
+	if _, err := f(); !errors.Is(err, wantErr) {
+		t.Errorf("expected error %v, got %v", wantErr, err)
 	}
 }

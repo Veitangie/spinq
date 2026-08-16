@@ -9,7 +9,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/clipperhouse/displaywidth"
 	"veitangie.dev/spinq/internal/stripansi"
 )
 
@@ -365,21 +365,21 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	divLength := runewidth.StringWidth(stripansi.Strip(opt.Dividers[0]))
+	divLength := displaywidth.String(stripansi.Strip(opt.Dividers[0]))
 	for _, div := range opt.Dividers[1:] {
-		if divLength != runewidth.StringWidth(stripansi.Strip(div)) {
+		if divLength != displaywidth.String(stripansi.Strip(div)) {
 			return NoopRender()
 		}
 	}
-	constPartLength := runewidth.StringWidth(stripansi.Strip(opt.Start)) +
-		runewidth.StringWidth(stripansi.Strip(opt.End))
+	constPartLength := displaywidth.String(stripansi.Strip(opt.Start)) +
+		displaywidth.String(stripansi.Strip(opt.End))
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := runewidth.StringWidth(stripansi.Strip(opt.Empty))
-	if unitLength != runewidth.StringWidth(stripansi.Strip(opt.Full)) || unitLength != divLength || unitLength > length {
+	unitLength := displaywidth.String(stripansi.Strip(opt.Empty))
+	if unitLength != displaywidth.String(stripansi.Strip(opt.Full)) || unitLength != divLength || unitLength > length {
 		return NoopRender()
 	}
 
@@ -437,16 +437,16 @@ func BarRender(length int, opts ...BarOptionsFunc) RenderFunc {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	constPartLength := runewidth.StringWidth(stripansi.Strip(opt.Start)) +
-		runewidth.StringWidth(stripansi.Strip(opt.Divider)) +
-		runewidth.StringWidth(stripansi.Strip(opt.End))
+	constPartLength := displaywidth.String(stripansi.Strip(opt.Start)) +
+		displaywidth.String(stripansi.Strip(opt.Divider)) +
+		displaywidth.String(stripansi.Strip(opt.End))
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := runewidth.StringWidth(stripansi.Strip(opt.Empty))
-	if unitLength != runewidth.StringWidth(stripansi.Strip(opt.Full)) || unitLength > length {
+	unitLength := displaywidth.String(stripansi.Strip(opt.Empty))
+	if unitLength != displaywidth.String(stripansi.Strip(opt.Full)) || unitLength > length {
 		return NoopRender()
 	}
 
@@ -503,4 +503,52 @@ func PercentRender() RenderFunc {
 		buf = append(buf, '%')
 		return buf
 	}
+}
+
+// RenderWidthFunc builds a fresh RenderFunc for a given terminal width - see
+// DynamicRender. BarRender/SmoothBarRender's length parameter is usually
+// what a RenderWidthFunc closes over to produce a correctly-sized render.
+type RenderWidthFunc func(int) RenderFunc
+
+// DynamicRender returns a RenderFunc that rebuilds itself via build whenever
+// getWidth's value changes - the RenderFunc-level counterpart to Dynamic. It
+// slots into Progress/JoinRender/RenderFunc.Join exactly like any other
+// RenderFunc, so a width-reactive bar still composes with FractRender,
+// PercentRender, and friends the same way a fixed-width one does.
+//
+// getWidth is called on every call to the returned RenderFunc - once per
+// frame render, which spinq treats as a hot path. Always pass the func
+// LiveGetWidth returns here, never a raw syscall-backed getWidth directly -
+// see Dynamic's doc comment for why.
+func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
+	width := getWidth()
+	currentRender := build(width)
+
+	return func(current, total int) []byte {
+		newWidth := getWidth()
+		if newWidth != width {
+			width = newWidth
+			currentRender = build(width)
+		}
+		return currentRender(current, total)
+	}
+}
+
+// DynamicBarRender is BarRender sized as a fraction of the current terminal
+// width instead of a fixed length: portion is the share of getWidth's value
+// the bar itself should occupy (e.g. 0.5 for half the terminal), truncated
+// down to a whole column count. See DynamicRender for the getWidth contract
+// - pass LiveGetWidth's output, not a raw getWidth.
+func DynamicBarRender(getWidth func() int, portion float64, opts ...BarOptionsFunc) RenderFunc {
+	return DynamicRender(getWidth, func(width int) RenderFunc {
+		return BarRender(int(math.Floor(float64(width)*portion)), opts...)
+	})
+}
+
+// DynamicSmoothBarRender is SmoothBarRender sized as a fraction of the
+// current terminal width - see DynamicBarRender.
+func DynamicSmoothBarRender(getWidth func() int, portion float64, opts ...SmoothBarOptionsFunc) RenderFunc {
+	return DynamicRender(getWidth, func(width int) RenderFunc {
+		return SmoothBarRender(int(math.Floor(float64(width)*portion)), opts...)
+	})
 }

@@ -4,6 +4,7 @@
 package spinq
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -117,6 +118,24 @@ func TestBarRender_MismatchedUnitWidthsReturnsNoop(t *testing.T) {
 	got := BarRender(10, WithBarOptions(opts))(5, 10)
 	if len(got) != 0 {
 		t.Errorf("expected no bytes when Full and Empty have different widths, got %q", got)
+	}
+}
+
+func TestBarRender_ExactlyOneUnitOfRoomStillRenders(t *testing.T) {
+	got := BarRender(4)(0, 10)
+	if len(got) == 0 {
+		t.Fatal("expected a bar to render with exactly one unit of room, got NoopRender's empty output")
+	}
+	if string(got) != "[> ]" {
+		t.Errorf("expected %q, got %q", "[> ]", got)
+	}
+}
+
+func TestBarRender_RendersCorrectlyWithMultiColumnUnits(t *testing.T) {
+	opts := BarOptions{Start: "", Full: "##", Divider: ">>", Empty: "  ", End: ""}
+	got := BarRender(22, WithBarOptions(opts))(5, 10)
+	if len(got) != 22 {
+		t.Errorf("expected total rendered length 22, got %d from %q", len(got), got)
 	}
 }
 
@@ -250,6 +269,42 @@ func TestSmoothBarRender_DividerWidthMustMatchFullAndEmpty(t *testing.T) {
 	}
 }
 
+func TestSmoothBarRender_AsymmetricStartAndEndWidthsSumCorrectly(t *testing.T) {
+	got := SmoothBarRender(15, SmoothWithStart("<<"), SmoothWithEnd(">>>"))(5, 10)
+	if w := runewidth.StringWidth(string(got)); w != 15 {
+		t.Errorf("expected total rendered width 15, got %d from %q", w, got)
+	}
+	if !strings.HasPrefix(string(got), "<<") || !strings.HasSuffix(string(got), ">>>") {
+		t.Errorf("expected Start/End to bracket the bar, got %q", got)
+	}
+}
+
+func TestSmoothBarRender_ExactlyOneUnitOfRoomStillRenders(t *testing.T) {
+	got := SmoothBarRender(1)(0, 10)
+	if len(got) == 0 {
+		t.Fatal("expected a bar to render with exactly one unit of room, got NoopRender's empty output")
+	}
+}
+
+func TestSmoothBarRender_RendersCorrectlyWithMultiColumnUnits(t *testing.T) {
+	got := SmoothBarRender(20, SmoothWithFull("██"), SmoothWithEmpty("  "), SmoothWithDivider([]string{"AA", "BB"}))(5, 10)
+	if w := runewidth.StringWidth(string(got)); w != 20 {
+		t.Errorf("expected total rendered width 20, got %d from %q", w, got)
+	}
+}
+
+func TestSmoothBarRender_DividerIndexClampNeverIndexesOutOfRange(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panicked (likely an out-of-range divider index): %v", r)
+		}
+	}()
+	got := SmoothBarRender(49, SmoothWithFull("███"), SmoothWithEmpty("   "), SmoothWithDivider([]string{"AAA", "BBB"}))(138, 161)
+	if len(got) == 0 {
+		t.Error("expected non-empty output")
+	}
+}
+
 func TestSmoothBarRender_LengthTooSmallReturnsNoop(t *testing.T) {
 	got := SmoothBarRender(0)(5, 10)
 	if len(got) != 0 {
@@ -370,5 +425,125 @@ func TestSmoothWithOptions_ReplacesWholeStruct(t *testing.T) {
 	}
 	if len(opt.Dividers) != 1 || opt.Dividers[0] != "o" {
 		t.Errorf("expected Dividers to come from the replacement struct, got %v", opt.Dividers)
+	}
+}
+
+func TestDynamicRender_UsesInitialWidthUpfront(t *testing.T) {
+	var gotWidth int
+	r := DynamicRender(func() int { return 40 }, func(width int) RenderFunc {
+		gotWidth = width
+		return func(current, total int) []byte { return []byte("x") }
+	})
+
+	if got := r(1, 10); string(got) != "x" {
+		t.Fatalf("unexpected output: %q", got)
+	}
+	if gotWidth != 40 {
+		t.Errorf("expected build to be called with the initial width 40, got %d", gotWidth)
+	}
+}
+
+func TestDynamicRender_DoesNotRebuildWithoutAWidthChange(t *testing.T) {
+	builds := 0
+	r := DynamicRender(func() int { return 40 }, func(width int) RenderFunc {
+		builds++
+		return func(current, total int) []byte { return []byte("x") }
+	})
+
+	for range 5 {
+		r(1, 10)
+	}
+	if builds != 1 {
+		t.Errorf("expected build to be called exactly once across unchanged-width calls, got %d", builds)
+	}
+}
+
+func TestDynamicRender_RebuildsOnWidthChange(t *testing.T) {
+	width := 40
+	var builds []int
+	r := DynamicRender(func() int { return width }, func(w int) RenderFunc {
+		builds = append(builds, w)
+		return func(current, total int) []byte { return []byte("x") }
+	})
+
+	r(1, 10)
+	width = 80
+	r(1, 10)
+	width = 80
+	r(1, 10)
+
+	want := []int{40, 80}
+	if !slices.Equal(builds, want) {
+		t.Errorf("expected build calls %v, got %v", want, builds)
+	}
+}
+
+func TestDynamicRender_PassesCurrentAndTotalThrough(t *testing.T) {
+	r := DynamicRender(func() int { return 40 }, func(width int) RenderFunc {
+		return func(current, total int) []byte {
+			return fmt.Appendf(nil, "%d/%d", current, total)
+		}
+	})
+
+	if got := r(3, 10); string(got) != "3/10" {
+		t.Errorf("expected %q, got %q", "3/10", got)
+	}
+	if got := r(7, 10); string(got) != "7/10" {
+		t.Errorf("expected %q, got %q", "7/10", got)
+	}
+}
+
+func TestDynamicRender_PropagatesBuildPanicFree(t *testing.T) {
+	r := DynamicBarRender(func() int { return 0 }, 0.5)
+	got := r(5, 10)
+	if len(got) != 0 {
+		t.Errorf("expected NoopRender-style empty output at width 0, got %q", got)
+	}
+}
+
+func TestDynamicBarRender_BuildsAtPortionOfWidth(t *testing.T) {
+	opts := BarOptions{Start: "[", Full: "=", Divider: ">", Empty: " ", End: "]"}
+	r := DynamicBarRender(func() int { return 80 }, 0.5, WithBarOptions(opts))
+
+	want := BarRender(40, WithBarOptions(opts))(5, 10)
+	got := r(5, 10)
+	if string(got) != string(want) {
+		t.Errorf("expected DynamicBarRender(width=80, portion=0.5) to match BarRender(40, ...), got %q want %q", got, want)
+	}
+}
+
+func TestDynamicBarRender_RebuildsOnWidthChange(t *testing.T) {
+	width := 80
+	r := DynamicBarRender(func() int { return width }, 0.5)
+
+	first := r(5, 10)
+	width = 40
+	second := r(5, 10)
+
+	if runewidth.StringWidth(string(first)) == runewidth.StringWidth(string(second)) {
+		t.Errorf("expected the bar to actually resize when width changes, got the same rendered width for both: %q vs %q", first, second)
+	}
+}
+
+func TestDynamicSmoothBarRender_BuildsAtPortionOfWidth(t *testing.T) {
+	r := DynamicSmoothBarRender(func() int { return 80 }, 0.5)
+
+	want := SmoothBarRender(40)(5, 10)
+	got := r(5, 10)
+	if string(got) != string(want) {
+		t.Errorf("expected DynamicSmoothBarRender(width=80, portion=0.5) to match SmoothBarRender(40), got %q want %q", got, want)
+	}
+}
+
+func TestDynamicSmoothBarRender_RebuildsOnWidthChange(t *testing.T) {
+	width := 80
+	r := DynamicSmoothBarRender(func() int { return width }, 0.5)
+
+	first := r(5, 10)
+	width = 40
+	second := r(5, 10)
+
+	if runewidth.StringWidth(string(first)) == runewidth.StringWidth(string(second)) {
+		t.Errorf("expected the bar to actually resize when width changes, got the same rendered width for both: %q vs %q", first, second)
 	}
 }

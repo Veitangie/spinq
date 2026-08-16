@@ -6,8 +6,10 @@ package spinq
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -94,7 +96,7 @@ func TestWithContext_SetsContext(t *testing.T) {
 func TestWithContext_NilIsANoOp(t *testing.T) {
 	original := context.WithValue(context.Background(), testCtxKey{}, "marker")
 	opt := WithContext(original)(JustStartOptions{})
-	opt = WithContext(nil)(opt) //nolint:staticcheck // deliberately testing nil-handling
+	opt = WithContext(nil)(opt) //nolint:staticcheck
 	if opt.Context != original {
 		t.Errorf("expected WithContext(nil) to leave the previous Context untouched, got %v", opt.Context)
 	}
@@ -111,7 +113,7 @@ func TestWithStartContext_SetsStartContext(t *testing.T) {
 func TestWithStartContext_NilActivelyResets(t *testing.T) {
 	ctx := context.WithValue(context.Background(), testCtxKey{}, "marker")
 	opt := WithStartContext(ctx)(JustStartOptions{})
-	opt = WithStartContext(nil)(opt) //nolint:staticcheck // deliberately testing nil-handling
+	opt = WithStartContext(nil)(opt) //nolint:staticcheck
 	if opt.StartContext != nil {
 		t.Errorf("expected WithStartContext(nil) to reset StartContext to nil, got %v", opt.StartContext)
 	}
@@ -193,6 +195,64 @@ func TestWithDivider_SetsDivider(t *testing.T) {
 	}
 }
 
+func TestWithResizeDetection_SetsSigwinChAndGetWidth(t *testing.T) {
+	sigwinCh := make(chan struct{})
+	getWidth := func() int { return 42 }
+
+	opt := WithResizeDetection(sigwinCh, getWidth)(JustStartOptions{})
+
+	if opt.SigwinCh == nil {
+		t.Error("expected SigwinCh to be set")
+	}
+	if opt.GetWidth == nil || opt.GetWidth() != 42 {
+		t.Error("expected GetWidth to be set to the provided function")
+	}
+}
+
+func TestWithResizeDetection_NilArgsAreANoop(t *testing.T) {
+	sigwinCh := make(chan struct{})
+	getWidth := func() int { return 42 }
+
+	t.Run("nil sigwinCh", func(t *testing.T) {
+		opt := WithResizeDetection(nil, getWidth)(JustStartOptions{})
+		if opt.SigwinCh != nil || opt.GetWidth != nil {
+			t.Errorf("expected a no-op, got %+v", opt)
+		}
+	})
+
+	t.Run("nil getWidth", func(t *testing.T) {
+		opt := WithResizeDetection(sigwinCh, nil)(JustStartOptions{})
+		if opt.SigwinCh != nil || opt.GetWidth != nil {
+			t.Errorf("expected a no-op, got %+v", opt)
+		}
+	})
+}
+
+func TestWithUnmanagedResizeDetection_SetsGetWidthClearsSigwinCh(t *testing.T) {
+	getWidth := func() int { return 42 }
+
+	opt := WithUnmanagedResizeDetection(getWidth)(JustStartOptions{SigwinCh: make(chan struct{})})
+
+	if opt.SigwinCh != nil {
+		t.Error("expected SigwinCh to be cleared")
+	}
+	if opt.GetWidth == nil || opt.GetWidth() != 42 {
+		t.Error("expected GetWidth to be set to the provided function")
+	}
+}
+
+func TestWithUnmanagedResizeDetection_NilGetWidthIsANoop(t *testing.T) {
+	existingSigwinCh := make(chan struct{})
+	opt := WithUnmanagedResizeDetection(nil)(JustStartOptions{SigwinCh: existingSigwinCh})
+
+	if opt.SigwinCh != (<-chan struct{})(existingSigwinCh) {
+		t.Error("expected an existing SigwinCh to be left untouched by a nil getWidth")
+	}
+	if opt.GetWidth != nil {
+		t.Error("expected GetWidth to stay unset")
+	}
+}
+
 func TestWithJustStartOptions_ReplacesWholeStruct(t *testing.T) {
 	replacement := JustStartOptions{
 		Context: context.WithValue(context.Background(), testCtxKey{}, "replacement"),
@@ -251,4 +311,92 @@ func TestJustStart_OptionsAreApplied(t *testing.T) {
 		t.Fatal("expected a non-nil pair")
 	}
 	pair.Close()
+}
+
+func withCIUnset(t *testing.T) {
+	t.Helper()
+	orig, wasSet := os.LookupEnv("CI")
+	_ = os.Unsetenv("CI")
+	t.Cleanup(func() {
+		if wasSet {
+			_ = os.Setenv("CI", orig)
+		}
+	})
+}
+
+func withRealTerminalStdio(t *testing.T) {
+	t.Helper()
+	withCIUnset(t)
+
+	outTTY := openTestPTY(t)
+	errTTY := openTestPTY(t)
+
+	origStdout, origStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outTTY, errTTY
+	t.Cleanup(func() { os.Stdout, os.Stderr = origStdout, origStderr })
+}
+
+func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
+	t.Run("managed", func(t *testing.T) {
+		withRealTerminalStdio(t)
+		pair, err := JustStart(WithResizeDetection(make(chan struct{}), func() int { return 80 }))
+		if err != nil {
+			t.Fatalf("JustStart: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
+			t.Errorf("expected an *awareClearerDrawer, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
+
+	t.Run("managed uses live getWidth, not the raw one", func(t *testing.T) {
+		withRealTerminalStdio(t)
+		width := &atomic.Int64{}
+		width.Store(40)
+		pair, err := JustStart(WithResizeDetection(make(chan struct{}, 1), func() int { return int(width.Load()) }))
+		if err != nil {
+			t.Fatalf("JustStart: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		aware, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer)
+		if !ok {
+			t.Fatalf("expected *awareClearerDrawer, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+		if got := aware.getWidth(); got != 40 {
+			t.Fatalf("expected initial width 40, got %d", got)
+		}
+
+		width.Store(80)
+		if got := aware.getWidth(); got != 40 {
+			t.Errorf("expected the managed getWidth to stay cached at 40 without a sigwinCh signal, got %d", got)
+		}
+	})
+
+	t.Run("unmanaged", func(t *testing.T) {
+		withRealTerminalStdio(t)
+		pair, err := JustStart(WithUnmanagedResizeDetection(func() int { return 80 }))
+		if err != nil {
+			t.Fatalf("JustStart: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
+			t.Errorf("expected an *awareClearerDrawer (unmanaged mode), got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
+
+	t.Run("neither configured stays oblivious", func(t *testing.T) {
+		withRealTerminalStdio(t)
+		pair, err := JustStart()
+		if err != nil {
+			t.Fatalf("JustStart: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+		if _, ok := asReal(t, pair.Spinny).st.cd.(obliviousClearerDrawer); !ok {
+			t.Errorf("expected an obliviousClearerDrawer by default, got %T", asReal(t, pair.Spinny).st.cd)
+		}
+	})
 }

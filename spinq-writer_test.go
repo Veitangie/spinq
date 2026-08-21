@@ -34,6 +34,9 @@ func TestSpinqWriterPassthrough_AllLifecycleMethodsAreNoOps(t *testing.T) {
 	if err := sw.Set(staticFrame([]byte("x"))); err != nil {
 		t.Errorf("Set: expected nil, got %v", err)
 	}
+	if sw.IsReal() {
+		t.Error("IsReal: expected false for a passthrough writer")
+	}
 	sw.close()
 }
 
@@ -50,6 +53,21 @@ func TestSpinqWriterPassthrough_WritePassesThroughUnmodified(t *testing.T) {
 	}
 	if buf.String() != "hello\n" {
 		t.Errorf("expected the underlying writer to receive the data verbatim, got %q", buf.String())
+	}
+}
+
+func TestSpinqWriterReal_IsReal(t *testing.T) {
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	if !pair.Standard.IsReal() {
+		t.Error("IsReal: expected true for a writer backed by a live spinner actor")
+	}
+	if !pair.Spinny.IsReal() {
+		t.Error("IsReal: expected true for a writer backed by a live spinner actor")
 	}
 }
 

@@ -65,7 +65,6 @@ type JustStartOptions struct {
 	States       []string
 	Text         string
 	Divider      string
-	SigwinCh     <-chan struct{}
 	GetWidth     func() int
 }
 
@@ -172,40 +171,19 @@ func WithDivider(div string) JustStartOptionsFunc {
 	}
 }
 
-// WithResizeDetection enables width-aware clearing/cropping (see
-// WrapWithResizeDetection) for JustStart. sigwinCh should signal whenever
-// the terminal size might have changed - see DefaultSigwinch,
-// SigwinchFromPoller, SigwinchFromOs, and SigwinchFromAny for ways to build
-// one. A nil sigwinCh or getWidth is a no-op, leaving resize detection off;
-// see WithUnmanagedResizeDetection if you only have a getWidth and no
-// signal source.
-func WithResizeDetection(sigwinCh <-chan struct{}, getWidth func() int) JustStartOptionsFunc {
-	if sigwinCh == nil || getWidth == nil {
-		return noop()
-	}
-	return func(jso JustStartOptions) JustStartOptions {
-		jso.SigwinCh = sigwinCh
-		jso.GetWidth = getWidth
-		return jso
-	}
-}
-
-// WithUnmanagedResizeDetection enables width-aware clearing/cropping like
-// WithResizeDetection, but without a sigwinCh to gate it: getWidth is called
-// on every clear() - every Write(), not just every tick - instead of only
-// when a signal says something changed. This is "unmanaged" for exactly
-// that reason: it's on you to make sure getWidth is cheap enough to call at
-// that frequency (an in-memory/cached value, not a raw syscall) - if you
-// have a real sigwinCh available, WithResizeDetection is almost always the
-// better choice, since it only pays for a real width query when something
-// actually changed. A nil getWidth is a no-op.
-func WithUnmanagedResizeDetection(getWidth func() int) JustStartOptionsFunc {
+// WithResizeDetection enables width-aware clearing/cropping for JustStart:
+// getWidth reports the current terminal width on demand. Pass an already-
+// cheap getWidth - typically CachedGetWidth's output, shaped with
+// Offset/Portion/Clamp as needed - since it may be called on every
+// clear()/Write(), not just on an actual resize; see WithDefaultResizeDetection
+// for a zero-configuration source. A nil getWidth is a no-op, leaving resize
+// detection off.
+func WithResizeDetection(getWidth func() int) JustStartOptionsFunc {
 	if getWidth == nil {
 		return noop()
 	}
 	return func(jso JustStartOptions) JustStartOptions {
 		jso.GetWidth = getWidth
-		jso.SigwinCh = nil
 		return jso
 	}
 }
@@ -241,10 +219,8 @@ func JustStart(opts ...JustStartOptionsFunc) (*SpinqPair, error) {
 		opt.Frame = Join(opt.Divider, Surrounded(" ", Simple(opt.States), fmt.Sprintf(" %s (", opt.Text)), Duration(time.Now), Static(")"))
 	}
 	wrapOpts := make([]WrapOptionsFunc, 0, 1)
-	if opt.SigwinCh != nil && opt.GetWidth != nil {
-		wrapOpts = append(wrapOpts, WrapWithResizeDetection(opt.SigwinCh, opt.GetWidth))
-	} else if opt.GetWidth != nil {
-		wrapOpts = append(wrapOpts, WrapWithUnmanagedResizeDetection(opt.GetWidth))
+	if opt.GetWidth != nil {
+		wrapOpts = append(wrapOpts, WrapWithResizeDetection(opt.GetWidth))
 	}
 
 	pair, err := WrapOS(opt.Context, opt.Frame, opt.Ticker, wrapOpts...)

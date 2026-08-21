@@ -64,7 +64,6 @@ func passthroughPair(main, spinny io.Writer) *SpinqPair {
 // resize detection off.
 type WrapOptions struct {
 	GetWidth func() int
-	SigwinCh <-chan struct{}
 }
 
 // WrapOptionsFunc configures a WrapOptions value; see WrapWithResizeDetection.
@@ -77,37 +76,18 @@ func DefaultWrapOptions() WrapOptions {
 }
 
 // WrapWithResizeDetection enables width-aware clearing/cropping for
-// WrapPair/WrapFilePair/WrapOS: sigwinCh should signal whenever the terminal
-// size might have changed (see DefaultSigwinch, SigwinchFromPoller,
-// SigwinchFromOs, SigwinchFromAny), and getWidth reports the current width
-// on demand. Internally this is fed through LiveGetWidth, so the real
-// getWidth is only ever queried when sigwinCh actually signals, not on every
-// clear()/Write(). A nil sigwinCh or getWidth is a no-op, leaving resize
-// detection off; see WrapWithUnmanagedResizeDetection if you only have a
-// getWidth and no signal source.
-func WrapWithResizeDetection(sigwinCh <-chan struct{}, getWidth func() int) WrapOptionsFunc {
-	if sigwinCh == nil || getWidth == nil {
-		return func(wo WrapOptions) WrapOptions { return wo }
-	}
-	return func(wo WrapOptions) WrapOptions {
-		wo.GetWidth = getWidth
-		wo.SigwinCh = sigwinCh
-		return wo
-	}
-}
-
-// WrapWithUnmanagedResizeDetection is WrapWithResizeDetection without a
-// sigwinCh to gate it - see WithUnmanagedResizeDetection's doc comment for
-// the cost tradeoff that implies (getWidth gets called on every
-// clear()/Write(), not just when something actually changed). A nil
-// getWidth is a no-op.
-func WrapWithUnmanagedResizeDetection(getWidth func() int) WrapOptionsFunc {
+// WrapPair/WrapFilePair/WrapOS: getWidth reports the current terminal width
+// on demand, and is called directly with no caching of its own on every
+// clear()/Write() - pass an already-cheap getWidth, typically
+// CachedGetWidth's output, shaped with Offset/Portion/Clamp as needed. See
+// WrapWithDefaultResizeDetection for a zero-configuration source. A nil
+// getWidth is a no-op, leaving resize detection off.
+func WrapWithResizeDetection(getWidth func() int) WrapOptionsFunc {
 	if getWidth == nil {
 		return func(wo WrapOptions) WrapOptions { return wo }
 	}
 	return func(wo WrapOptions) WrapOptions {
 		wo.GetWidth = getWidth
-		wo.SigwinCh = nil
 		return wo
 	}
 }
@@ -148,13 +128,7 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 	}
 
 	var cd clearerDrawer = obliviousClearerDrawer{}
-	if opt.SigwinCh != nil && opt.GetWidth != nil {
-		getWidth := LiveGetWidth(opt.SigwinCh, opt.GetWidth)
-		cd = &awareClearerDrawer{
-			getWidth: getWidth,
-			width:    getWidth(),
-		}
-	} else if opt.GetWidth != nil {
+	if opt.GetWidth != nil {
 		cd = &awareClearerDrawer{
 			getWidth: opt.GetWidth,
 			width:    opt.GetWidth(),

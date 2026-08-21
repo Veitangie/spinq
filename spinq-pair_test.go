@@ -98,86 +98,43 @@ func TestWrapPair_SpinnyFallsBackToMain(t *testing.T) {
 	}
 }
 
-func TestWrapWithResizeDetection_SetsSigwinChAndGetWidth(t *testing.T) {
-	sigwinCh := make(chan struct{})
+func TestWrapWithResizeDetection_SetsGetWidth(t *testing.T) {
 	getWidth := func() int { return 42 }
 
-	opt := WrapWithResizeDetection(sigwinCh, getWidth)(WrapOptions{})
+	opt := WrapWithResizeDetection(getWidth)(WrapOptions{})
 
-	if opt.SigwinCh == nil {
-		t.Error("expected SigwinCh to be set")
-	}
 	if opt.GetWidth == nil || opt.GetWidth() != 42 {
 		t.Error("expected GetWidth to be set to the provided function")
 	}
 }
 
-func TestWrapWithResizeDetection_NilArgsAreANoop(t *testing.T) {
-	sigwinCh := make(chan struct{})
-	getWidth := func() int { return 42 }
-
-	t.Run("nil sigwinCh", func(t *testing.T) {
-		opt := WrapWithResizeDetection(nil, getWidth)(WrapOptions{})
-		if opt.SigwinCh != nil || opt.GetWidth != nil {
-			t.Errorf("expected a no-op, got %+v", opt)
-		}
-	})
-
-	t.Run("nil getWidth", func(t *testing.T) {
-		opt := WrapWithResizeDetection(sigwinCh, nil)(WrapOptions{})
-		if opt.SigwinCh != nil || opt.GetWidth != nil {
-			t.Errorf("expected a no-op, got %+v", opt)
-		}
-	})
-}
-
-func TestWrapWithUnmanagedResizeDetection_SetsGetWidthClearsSigwinCh(t *testing.T) {
-	getWidth := func() int { return 42 }
-
-	opt := WrapWithUnmanagedResizeDetection(getWidth)(WrapOptions{SigwinCh: make(chan struct{})})
-
-	if opt.SigwinCh != nil {
-		t.Error("expected SigwinCh to be cleared")
-	}
-	if opt.GetWidth == nil || opt.GetWidth() != 42 {
-		t.Error("expected GetWidth to be set to the provided function")
-	}
-}
-
-func TestWrapWithUnmanagedResizeDetection_NilGetWidthIsANoop(t *testing.T) {
-	existingSigwinCh := make(chan struct{})
-	opt := WrapWithUnmanagedResizeDetection(nil)(WrapOptions{SigwinCh: existingSigwinCh})
-
-	if opt.SigwinCh != (<-chan struct{})(existingSigwinCh) {
-		t.Error("expected an existing SigwinCh to be left untouched by a nil getWidth")
-	}
+func TestWrapWithResizeDetection_NilGetWidthIsANoop(t *testing.T) {
+	opt := WrapWithResizeDetection(nil)(WrapOptions{})
 	if opt.GetWidth != nil {
-		t.Error("expected GetWidth to stay unset")
+		t.Errorf("expected a no-op, got %+v", opt)
 	}
 }
 
 func TestWrapPair_ResizeDetectionOption_UsesAwareClearerDrawer(t *testing.T) {
-	sigwinCh := make(chan struct{})
 	getWidth := func() int { return 42 }
 
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(sigwinCh, getWidth))
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(getWidth))
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
 	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
 
 	if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
-		t.Errorf("expected an *awareClearerDrawer when both SigwinCh and GetWidth are set, got %T", asReal(t, pair.Spinny).st.cd)
+		t.Errorf("expected an *awareClearerDrawer when GetWidth is set, got %T", asReal(t, pair.Spinny).st.cd)
 	}
 }
 
-func TestWrapPair_ResizeDetectionOption_UsesLiveGetWidthNotRawGetWidth(t *testing.T) {
-	sigwinCh := make(chan struct{}, 1)
+func TestWrapPair_ResizeDetectionOption_CallsGetWidthDirectlyWithNoImplicitCaching(t *testing.T) {
 	width := &atomic.Int64{}
 	width.Store(40)
 	getWidth := func() int { return int(width.Load()) }
 
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(sigwinCh, getWidth))
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(getWidth))
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
@@ -192,14 +149,14 @@ func TestWrapPair_ResizeDetectionOption_UsesLiveGetWidthNotRawGetWidth(t *testin
 	}
 
 	width.Store(80)
-	if got := aware.getWidth(); got != 40 {
-		t.Errorf("expected the managed getWidth to stay cached at 40 without a sigwinCh signal (proving it's LiveGetWidth-wrapped, not the raw getWidth passed through directly), got %d", got)
+	if got := aware.getWidth(); got != 80 {
+		t.Errorf("expected WrapPair to call the provided getWidth directly with no caching of its own (caching is now the caller's job via CachedGetWidth), got %d", got)
 	}
 }
 
-func TestWrapPair_PartialResizeDetectionOption(t *testing.T) {
-	t.Run("only sigwinCh set stays oblivious", func(t *testing.T) {
-		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(make(chan struct{}), nil))
+func TestWrapPair_NoResizeDetectionOption_StaysOblivious(t *testing.T) {
+	t.Run("nil GetWidth stays oblivious", func(t *testing.T) {
+		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(nil))
 		if err != nil {
 			t.Fatalf("WrapPair: %v", err)
 		}
@@ -210,19 +167,7 @@ func TestWrapPair_PartialResizeDetectionOption(t *testing.T) {
 		}
 	})
 
-	t.Run("only getWidth set uses unmanaged awareClearerDrawer", func(t *testing.T) {
-		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithUnmanagedResizeDetection(func() int { return 1 }))
-		if err != nil {
-			t.Fatalf("WrapPair: %v", err)
-		}
-		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
-
-		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
-			t.Errorf("expected an *awareClearerDrawer (unmanaged mode) when only GetWidth is set, got %T", asReal(t, pair.Spinny).st.cd)
-		}
-	})
-
-	t.Run("neither set", func(t *testing.T) {
+	t.Run("no option set", func(t *testing.T) {
 		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
 		if err != nil {
 			t.Fatalf("WrapPair: %v", err)

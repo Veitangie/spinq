@@ -381,8 +381,8 @@ type WidthFunc func(width int) FrameFunc
 //
 // getWidth is called on every call to the returned FrameFunc - once per
 // frame render, which spinq treats as a hot path. Always pass the func
-// LiveGetWidth returns here, never a raw syscall-backed getWidth directly:
-// LiveGetWidth is what makes this cheap, both for a single Dynamic instance
+// CachedGetWidth returns here, never a raw syscall-backed getWidth directly:
+// CachedGetWidth is what makes this cheap, both for a single Dynamic instance
 // and for however many are joined together in one frame, since they can all
 // share its output rather than each paying for their own real query.
 func Dynamic(getWidth func() int, build WidthFunc) FrameFunc {

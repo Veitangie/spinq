@@ -22,8 +22,20 @@ jobs:
       - run: go vet ./...
       - run: go test . -race
 
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - run: go build ./...
+      - run: go vet ./...
+
   release:
-    needs: test
+    needs: [test, test-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

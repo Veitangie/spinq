@@ -195,61 +195,20 @@ func TestWithDivider_SetsDivider(t *testing.T) {
 	}
 }
 
-func TestWithResizeDetection_SetsSigwinChAndGetWidth(t *testing.T) {
-	sigwinCh := make(chan struct{})
+func TestWithResizeDetection_SetsGetWidth(t *testing.T) {
 	getWidth := func() int { return 42 }
 
-	opt := WithResizeDetection(sigwinCh, getWidth)(JustStartOptions{})
+	opt := WithResizeDetection(getWidth)(JustStartOptions{})
 
-	if opt.SigwinCh == nil {
-		t.Error("expected SigwinCh to be set")
-	}
 	if opt.GetWidth == nil || opt.GetWidth() != 42 {
 		t.Error("expected GetWidth to be set to the provided function")
 	}
 }
 
-func TestWithResizeDetection_NilArgsAreANoop(t *testing.T) {
-	sigwinCh := make(chan struct{})
-	getWidth := func() int { return 42 }
-
-	t.Run("nil sigwinCh", func(t *testing.T) {
-		opt := WithResizeDetection(nil, getWidth)(JustStartOptions{})
-		if opt.SigwinCh != nil || opt.GetWidth != nil {
-			t.Errorf("expected a no-op, got %+v", opt)
-		}
-	})
-
-	t.Run("nil getWidth", func(t *testing.T) {
-		opt := WithResizeDetection(sigwinCh, nil)(JustStartOptions{})
-		if opt.SigwinCh != nil || opt.GetWidth != nil {
-			t.Errorf("expected a no-op, got %+v", opt)
-		}
-	})
-}
-
-func TestWithUnmanagedResizeDetection_SetsGetWidthClearsSigwinCh(t *testing.T) {
-	getWidth := func() int { return 42 }
-
-	opt := WithUnmanagedResizeDetection(getWidth)(JustStartOptions{SigwinCh: make(chan struct{})})
-
-	if opt.SigwinCh != nil {
-		t.Error("expected SigwinCh to be cleared")
-	}
-	if opt.GetWidth == nil || opt.GetWidth() != 42 {
-		t.Error("expected GetWidth to be set to the provided function")
-	}
-}
-
-func TestWithUnmanagedResizeDetection_NilGetWidthIsANoop(t *testing.T) {
-	existingSigwinCh := make(chan struct{})
-	opt := WithUnmanagedResizeDetection(nil)(JustStartOptions{SigwinCh: existingSigwinCh})
-
-	if opt.SigwinCh != (<-chan struct{})(existingSigwinCh) {
-		t.Error("expected an existing SigwinCh to be left untouched by a nil getWidth")
-	}
+func TestWithResizeDetection_NilGetWidthIsANoop(t *testing.T) {
+	opt := WithResizeDetection(nil)(JustStartOptions{})
 	if opt.GetWidth != nil {
-		t.Error("expected GetWidth to stay unset")
+		t.Errorf("expected a no-op, got %+v", opt)
 	}
 }
 
@@ -337,9 +296,9 @@ func withRealTerminalStdio(t *testing.T) {
 }
 
 func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
-	t.Run("managed", func(t *testing.T) {
+	t.Run("GetWidth set", func(t *testing.T) {
 		withRealTerminalStdio(t)
-		pair, err := JustStart(WithResizeDetection(make(chan struct{}), func() int { return 80 }))
+		pair, err := JustStart(WithResizeDetection(func() int { return 80 }))
 		if err != nil {
 			t.Fatalf("JustStart: %v", err)
 		}
@@ -350,11 +309,11 @@ func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
 		}
 	})
 
-	t.Run("managed uses live getWidth, not the raw one", func(t *testing.T) {
+	t.Run("calls getWidth directly with no implicit caching", func(t *testing.T) {
 		withRealTerminalStdio(t)
 		width := &atomic.Int64{}
 		width.Store(40)
-		pair, err := JustStart(WithResizeDetection(make(chan struct{}, 1), func() int { return int(width.Load()) }))
+		pair, err := JustStart(WithResizeDetection(func() int { return int(width.Load()) }))
 		if err != nil {
 			t.Fatalf("JustStart: %v", err)
 		}
@@ -369,21 +328,8 @@ func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
 		}
 
 		width.Store(80)
-		if got := aware.getWidth(); got != 40 {
-			t.Errorf("expected the managed getWidth to stay cached at 40 without a sigwinCh signal, got %d", got)
-		}
-	})
-
-	t.Run("unmanaged", func(t *testing.T) {
-		withRealTerminalStdio(t)
-		pair, err := JustStart(WithUnmanagedResizeDetection(func() int { return 80 }))
-		if err != nil {
-			t.Fatalf("JustStart: %v", err)
-		}
-		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
-
-		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
-			t.Errorf("expected an *awareClearerDrawer (unmanaged mode), got %T", asReal(t, pair.Spinny).st.cd)
+		if got := aware.getWidth(); got != 80 {
+			t.Errorf("expected JustStart to call the provided getWidth directly with no caching of its own (caching is now the caller's job via CachedGetWidth), got %d", got)
 		}
 	})
 

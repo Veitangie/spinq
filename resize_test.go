@@ -131,20 +131,20 @@ func TestSigwinchFromPoller_FiresPeriodicallyAndClosesOnCancel(t *testing.T) {
 	drainUntilClosed(t, sigwinch, 2*time.Second)
 }
 
-func TestLiveGetWidth_InitialValueFromGetWidthUpfront(t *testing.T) {
+func TestCachedGetWidth_InitialValueFromGetWidthUpfront(t *testing.T) {
 	sigwinch := make(chan struct{})
-	live := LiveGetWidth(sigwinch, func() int { return 80 })
+	live := CachedGetWidth(sigwinch, func() int { return 80 })
 	if got := live(); got != 80 {
 		t.Errorf("expected initial width 80, got %d", got)
 	}
 }
 
-func TestLiveGetWidth_UpdatesOnlyAfterSignal(t *testing.T) {
+func TestCachedGetWidth_UpdatesOnlyAfterSignal(t *testing.T) {
 	sigwinch := make(chan struct{})
 	width := &atomic.Int64{}
 	width.Store(80)
 	calls := &atomic.Int64{}
-	live := LiveGetWidth(sigwinch, func() int {
+	live := CachedGetWidth(sigwinch, func() int {
 		calls.Add(1)
 		return int(width.Load())
 	})
@@ -161,9 +161,9 @@ func TestLiveGetWidth_UpdatesOnlyAfterSignal(t *testing.T) {
 	waitForCondition(t, func() bool { return live() == 120 })
 }
 
-func TestLiveGetWidth_SafeForConcurrentReads(t *testing.T) {
+func TestCachedGetWidth_SafeForConcurrentReads(t *testing.T) {
 	sigwinch := make(chan struct{})
-	live := LiveGetWidth(sigwinch, func() int { return 80 })
+	live := CachedGetWidth(sigwinch, func() int { return 80 })
 
 	var wg sync.WaitGroup
 	for range 20 {
@@ -176,4 +176,63 @@ func TestLiveGetWidth_SafeForConcurrentReads(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestOffset_AddsDelta(t *testing.T) {
+	width := Offset(func() int { return 80 }, -6)
+	if got := width(); got != 74 {
+		t.Errorf("expected 74, got %d", got)
+	}
+}
+
+func TestOffset_ReflectsUnderlyingWidthChanges(t *testing.T) {
+	current := 80
+	width := Offset(func() int { return current }, 10)
+	if got := width(); got != 90 {
+		t.Errorf("expected 90, got %d", got)
+	}
+	current = 40
+	if got := width(); got != 50 {
+		t.Errorf("expected 50, got %d", got)
+	}
+}
+
+func TestPortion_ScalesByFraction(t *testing.T) {
+	width := Portion(func() int { return 80 }, 0.5)
+	if got := width(); got != 40 {
+		t.Errorf("expected 40, got %d", got)
+	}
+}
+
+func TestPortion_ClampsAboveOne(t *testing.T) {
+	width := Portion(func() int { return 80 }, 1.5)
+	if got := width(); got != 80 {
+		t.Errorf("expected the fraction to clamp to 1 (full width), got %d", got)
+	}
+}
+
+func TestPortion_ClampsBelowZero(t *testing.T) {
+	width := Portion(func() int { return 80 }, -0.5)
+	if got := width(); got != 0 {
+		t.Errorf("expected the fraction to clamp to 0, got %d", got)
+	}
+}
+
+func TestClamp_BoundsToRange(t *testing.T) {
+	current := 5
+	width := Clamp(func() int { return current }, 10, 100)
+
+	if got := width(); got != 10 {
+		t.Errorf("expected the low bound 10, got %d", got)
+	}
+
+	current = 50
+	if got := width(); got != 50 {
+		t.Errorf("expected the unclamped value 50, got %d", got)
+	}
+
+	current = 200
+	if got := width(); got != 100 {
+		t.Errorf("expected the high bound 100, got %d", got)
+	}
 }

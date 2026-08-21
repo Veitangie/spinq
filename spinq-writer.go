@@ -25,6 +25,10 @@ import (
 //     display, optionally followed by a raw suffix; if that final fetch
 //     fails, the previous frame is left untouched rather than blanked.
 //   - Set installs a new FrameFunc, taking effect on the very next redraw.
+//   - IsReal reports whether this writer is backed by a live spinner actor
+//     or is a no-op passthrough - false whenever WrapFilePair/WrapOS/
+//     JustStart fell back because the underlying stream isn't a real
+//     terminal, true otherwise.
 //
 // Two implementations exist: SpinqWriterReal, backed by a live spinner
 // actor, and SpinqWriterPassthrough, a plain passthrough used whenever
@@ -37,6 +41,7 @@ type SpinqWriter interface {
 	StopWith(string) error
 	StopNoClear(string) error
 	Set(FrameFunc) error
+	IsReal() bool
 	close()
 }
 
@@ -60,6 +65,8 @@ func (sw SpinqWriterPassthrough) StopWith(_ string) error { return nil }
 func (sw SpinqWriterPassthrough) StopNoClear(_ string) error { return nil }
 
 func (sw SpinqWriterPassthrough) Set(_ FrameFunc) error { return nil }
+
+func (sw SpinqWriterPassthrough) IsReal() bool { return false }
 
 func (sw SpinqWriterPassthrough) close() {}
 
@@ -122,6 +129,8 @@ func (sw SpinqWriterReal) StopNoClear(message string) error {
 func (sw SpinqWriterReal) Set(getFrame FrameFunc) error {
 	return sw.st.setGetFrame(getFrame)
 }
+
+func (sw SpinqWriterReal) IsReal() bool { return true }
 
 func (sw SpinqWriterReal) close() {
 	sw.st.close()

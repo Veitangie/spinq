@@ -66,20 +66,21 @@ func SigwinchFromOs(in <-chan os.Signal) <-chan struct{} {
 	return sigwinch
 }
 
-// defaultResizeDetection is the shared core behind WithDefaultResizeDetection
+// DefaultGetWidth is the shared core behind WithDefaultResizeDetection
 // and WrapWithDefaultResizeDetection: os.Stderr sized via WidthFromFile, real
 // SIGWINCH via DefaultSigwinch. A nil ctx defaults to context.Background().
 // Returns an error whenever os.Stderr isn't a real terminal, which both
 // callers turn into a no-op rather than propagating.
-func defaultResizeDetection(ctx context.Context) (<-chan struct{}, func() int, error) {
+func DefaultGetWidth(ctx context.Context) (func() int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	getWidth, err := WidthFromFile(os.Stderr)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return DefaultSigwinch(ctx), getWidth, nil
+
+	return CachedGetWidth(DefaultSigwinch(ctx), getWidth), nil
 }
 
 // WithDefaultResizeDetection enables resize detection for JustStart with
@@ -89,19 +90,19 @@ func defaultResizeDetection(ctx context.Context) (<-chan struct{}, func() int, e
 // context.Background(). Falls back to a no-op if os.Stderr isn't a real
 // terminal.
 func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
-	sigwinCh, getWidth, err := defaultResizeDetection(ctx)
+	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {
 		return noop()
 	}
-	return WithResizeDetection(sigwinCh, getWidth)
+	return WithResizeDetection(getWidth)
 }
 
 // WrapWithDefaultResizeDetection is WithDefaultResizeDetection for the
 // lower-level WrapPair/WrapFilePair/WrapOS family.
 func WrapWithDefaultResizeDetection(ctx context.Context) WrapOptionsFunc {
-	sigwinCh, getWidth, err := defaultResizeDetection(ctx)
+	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {
 		return func(wo WrapOptions) WrapOptions { return wo }
 	}
-	return WrapWithResizeDetection(sigwinCh, getWidth)
+	return WrapWithResizeDetection(getWidth)
 }

@@ -85,12 +85,12 @@ func TestDefaultResizeDetection_SucceedsWhenStderrIsATerminal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigwinCh, getWidth, err := defaultResizeDetection(ctx)
+	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {
-		t.Fatalf("defaultResizeDetection: %v", err)
+		t.Fatalf("DefaultGetWidth: %v", err)
 	}
-	if sigwinCh == nil || getWidth == nil {
-		t.Fatal("expected non-nil sigwinCh and getWidth on success")
+	if getWidth == nil {
+		t.Fatal("expected a non-nil getWidth on success")
 	}
 }
 
@@ -102,7 +102,7 @@ func TestDefaultResizeDetection_ErrorsWhenStderrIsNotATerminal(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	withStderr(t, f)
 
-	if _, _, err := defaultResizeDetection(context.Background()); err == nil {
+	if _, err := DefaultGetWidth(context.Background()); err == nil {
 		t.Error("expected an error when stderr is not a terminal")
 	}
 }
@@ -110,8 +110,8 @@ func TestDefaultResizeDetection_ErrorsWhenStderrIsNotATerminal(t *testing.T) {
 func TestDefaultResizeDetection_NilCtxDefaultsToBackground(t *testing.T) {
 	withStderr(t, openTestPTY(t))
 
-	if _, _, err := defaultResizeDetection(nil); err != nil { //nolint:staticcheck
-		t.Fatalf("defaultResizeDetection(nil): %v", err)
+	if _, err := DefaultGetWidth(nil); err != nil { //nolint:staticcheck
+		t.Fatalf("DefaultGetWidth(nil): %v", err)
 	}
 }
 
@@ -122,8 +122,8 @@ func TestWithDefaultResizeDetection_WiresOptionsWhenAvailable(t *testing.T) {
 
 	opt := WithDefaultResizeDetection(ctx)
 	jso := opt(JustStartOptions{})
-	if jso.SigwinCh == nil || jso.GetWidth == nil {
-		t.Error("expected WithDefaultResizeDetection to wire SigwinCh/GetWidth when stderr is a terminal")
+	if jso.GetWidth == nil {
+		t.Error("expected WithDefaultResizeDetection to wire GetWidth when stderr is a terminal")
 	}
 }
 
@@ -137,7 +137,7 @@ func TestWithDefaultResizeDetection_NoopWhenUnavailable(t *testing.T) {
 
 	opt := WithDefaultResizeDetection(context.Background())
 	jso := opt(JustStartOptions{})
-	if jso.SigwinCh != nil || jso.GetWidth != nil {
+	if jso.GetWidth != nil {
 		t.Error("expected WithDefaultResizeDetection to be a no-op when stderr is not a terminal")
 	}
 }
@@ -149,8 +149,8 @@ func TestWrapWithDefaultResizeDetection_WiresOptionsWhenAvailable(t *testing.T) 
 
 	opt := WrapWithDefaultResizeDetection(ctx)
 	wo := opt(WrapOptions{})
-	if wo.SigwinCh == nil || wo.GetWidth == nil {
-		t.Error("expected WrapWithDefaultResizeDetection to wire SigwinCh/GetWidth when stderr is a terminal")
+	if wo.GetWidth == nil {
+		t.Error("expected WrapWithDefaultResizeDetection to wire GetWidth when stderr is a terminal")
 	}
 }
 
@@ -164,7 +164,7 @@ func TestWrapWithDefaultResizeDetection_NoopWhenUnavailable(t *testing.T) {
 
 	opt := WrapWithDefaultResizeDetection(context.Background())
 	wo := opt(WrapOptions{})
-	if wo.SigwinCh != nil || wo.GetWidth != nil {
+	if wo.GetWidth != nil {
 		t.Error("expected WrapWithDefaultResizeDetection to be a no-op when stderr is not a terminal")
 	}
 }

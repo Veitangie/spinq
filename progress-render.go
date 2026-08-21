@@ -206,66 +206,88 @@ func DefaultBarOptions() BarOptions {
 	}
 }
 
-// RoundedBarOptions returns a preset BarOptions styled as "(###>----)".
-func RoundedBarOptions() BarOptions {
-	return BarOptions{
-		Start:     "(",
-		Full:      "#",
-		Divider:   ">",
-		Empty:     "-",
-		End:       ")",
-		Direction: Right,
+// WithRoundedBarOptions returns a preset BarOptions styled as "(###>----)".
+// Like WithBarOptions, it replaces the whole BarOptions - apply it before
+// any BarWith* tweaks in the same BarRender call, not after, or it discards
+// them.
+func WithRoundedBarOptions() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "(",
+			Full:      "#",
+			Divider:   ">",
+			Empty:     "-",
+			End:       ")",
+			Direction: Right,
+		}
 	}
 }
 
-// ShadeBarOptions returns a preset BarOptions styled as "███░░░", using
-// shaded block characters with no brackets.
-func ShadeBarOptions() BarOptions {
-	return BarOptions{
-		Start:     "",
-		Full:      "█",
-		Divider:   "█",
-		Empty:     "░",
-		End:       "",
-		Direction: Right,
+// WithShadeBarOptions returns a preset BarOptions styled as "███░░░", using
+// shaded block characters with no brackets. Like WithBarOptions, it replaces
+// the whole BarOptions - apply it before any BarWith* tweaks in the same
+// BarRender call, not after, or it discards them.
+func WithShadeBarOptions() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "█",
+			Divider:   "█",
+			Empty:     "░",
+			End:       "",
+			Direction: Right,
+		}
 	}
 }
 
-// DotBarOptions returns a preset BarOptions styled as "(●●●○○○)".
-func DotBarOptions() BarOptions {
-	return BarOptions{
-		Start:     "(",
-		Full:      "●",
-		Divider:   "●",
-		Empty:     "○",
-		End:       ")",
-		Direction: Right,
+// WithDotBarOptions returns a preset BarOptions styled as "(●●●○○○)". Like
+// WithBarOptions, it replaces the whole BarOptions - apply it before any
+// BarWith* tweaks in the same BarRender call, not after, or it discards
+// them.
+func WithDotBarOptions() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "(",
+			Full:      "●",
+			Divider:   "●",
+			Empty:     "○",
+			End:       ")",
+			Direction: Right,
+		}
 	}
 }
 
-// MinimalBarOptions returns a preset BarOptions styled as "###>---", with
-// no brackets.
-func MinimalBarOptions() BarOptions {
-	return BarOptions{
-		Start:     "",
-		Full:      "#",
-		Divider:   ">",
-		Empty:     "-",
-		End:       "",
-		Direction: Right,
+// WithMinimalBarOptions returns a preset BarOptions styled as "###>---", with
+// no brackets. Like WithBarOptions, it replaces the whole BarOptions - apply
+// it before any BarWith* tweaks in the same BarRender call, not after, or it
+// discards them.
+func WithMinimalBarOptions() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "#",
+			Divider:   ">",
+			Empty:     "-",
+			End:       "",
+			Direction: Right,
+		}
 	}
 }
 
-// ThinBarOptions returns a preset BarOptions styled as "▰▰▰▱▱▱", with
-// no brackets.
-func ThinBarOptions() BarOptions {
-	return BarOptions{
-		Start:     "",
-		Full:      "▰",
-		Divider:   "▰",
-		Empty:     "▱",
-		End:       "",
-		Direction: Right,
+// WithThinBarOptions returns a preset BarOptions styled as "▰▰▰▱▱▱", with no
+// brackets. Like WithBarOptions, it replaces the whole BarOptions - apply it
+// before any BarWith* tweaks in the same BarRender call, not after, or it
+// discards them.
+func WithThinBarOptions() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "▰",
+			Divider:   "▰",
+			Empty:     "▱",
+			End:       "",
+			Direction: Right,
+		}
 	}
 }
 
@@ -485,10 +507,17 @@ func BarRender(length int, opts ...BarOptionsFunc) RenderFunc {
 func FractRender(sep string) RenderFunc {
 	sepBytes := []byte(sep)
 	return func(current, total int) []byte {
-		buf := make([]byte, 0, 40+len(sepBytes))
-		buf = strconv.AppendInt(buf, int64(current), 10)
+		currentBytes := make([]byte, 0, 20)
+		currentBytes = strconv.AppendInt(currentBytes, int64(current), 10)
+		totalBytes := make([]byte, 0, 20)
+		totalBytes = strconv.AppendInt(totalBytes, int64(total), 10)
+		buf := make([]byte, 0, (len(totalBytes)*2)+len(sepBytes))
+		for range len(totalBytes) - len(currentBytes) {
+			buf = append(buf, ' ')
+		}
+		buf = append(buf, currentBytes...)
 		buf = append(buf, sepBytes...)
-		buf = strconv.AppendInt(buf, int64(total), 10)
+		buf = append(buf, totalBytes...)
 		return buf
 	}
 }
@@ -497,9 +526,15 @@ func FractRender(sep string) RenderFunc {
 // percentage, e.g. "50%". It truncates rather than rounds.
 func PercentRender() RenderFunc {
 	return func(current, total int) []byte {
-		percent := (float64(current) / float64(total)) * 100
+		percent := int64((float64(current) / float64(total)) * 100)
 		buf := make([]byte, 0, 4)
-		buf = strconv.AppendInt(buf, int64(percent), 10)
+		if percent < 100 {
+			buf = append(buf, ' ')
+		}
+		if percent < 10 {
+			buf = append(buf, ' ')
+		}
+		buf = strconv.AppendInt(buf, percent, 10)
 		buf = append(buf, '%')
 		return buf
 	}
@@ -518,7 +553,7 @@ type RenderWidthFunc func(int) RenderFunc
 //
 // getWidth is called on every call to the returned RenderFunc - once per
 // frame render, which spinq treats as a hot path. Always pass the func
-// LiveGetWidth returns here, never a raw syscall-backed getWidth directly -
+// CachedGetWidth returns here, never a raw syscall-backed getWidth directly -
 // see Dynamic's doc comment for why.
 func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
 	width := getWidth()
@@ -534,21 +569,22 @@ func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
 	}
 }
 
-// DynamicBarRender is BarRender sized as a fraction of the current terminal
-// width instead of a fixed length: portion is the share of getWidth's value
-// the bar itself should occupy (e.g. 0.5 for half the terminal), truncated
-// down to a whole column count. See DynamicRender for the getWidth contract
-// - pass LiveGetWidth's output, not a raw getWidth.
-func DynamicBarRender(getWidth func() int, portion float64, opts ...BarOptionsFunc) RenderFunc {
+// DynamicBarRender is BarRender sized by getWidth instead of a fixed length -
+// DynamicRender applied to BarRender. getWidth is called on every render, so
+// pass CachedGetWidth's output, not a raw one; shape it first with
+// Offset/Portion/Clamp if you want a fraction of the terminal, room reserved
+// for fixed-width siblings, or a bounded range, rather than the raw width
+// verbatim.
+func DynamicBarRender(getWidth func() int, opts ...BarOptionsFunc) RenderFunc {
 	return DynamicRender(getWidth, func(width int) RenderFunc {
-		return BarRender(int(math.Floor(float64(width)*portion)), opts...)
+		return BarRender(width, opts...)
 	})
 }
 
-// DynamicSmoothBarRender is SmoothBarRender sized as a fraction of the
-// current terminal width - see DynamicBarRender.
-func DynamicSmoothBarRender(getWidth func() int, portion float64, opts ...SmoothBarOptionsFunc) RenderFunc {
+// DynamicSmoothBarRender is SmoothBarRender sized by getWidth instead of a
+// fixed length - see DynamicBarRender.
+func DynamicSmoothBarRender(getWidth func() int, opts ...SmoothBarOptionsFunc) RenderFunc {
 	return DynamicRender(getWidth, func(width int) RenderFunc {
-		return SmoothBarRender(int(math.Floor(float64(width)*portion)), opts...)
+		return SmoothBarRender(width, opts...)
 	})
 }

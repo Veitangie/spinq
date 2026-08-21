@@ -167,15 +167,33 @@ func TestBarRender_DirectionLeftMirrorsRight(t *testing.T) {
 
 func TestFractRender(t *testing.T) {
 	got := FractRender("/")(5, 10)
-	if string(got) != "5/10" {
-		t.Errorf("expected %q, got %q", "5/10", got)
+	if string(got) != " 5/10" {
+		t.Errorf("expected %q, got %q", " 5/10", got)
 	}
 }
 
 func TestFractRender_CustomSeparator(t *testing.T) {
 	got := FractRender(" of ")(5, 10)
-	if string(got) != "5 of 10" {
-		t.Errorf("expected %q, got %q", "5 of 10", got)
+	if string(got) != " 5 of 10" {
+		t.Errorf("expected %q, got %q", " 5 of 10", got)
+	}
+}
+
+func TestFractRender_PadsCurrentToMatchTotalDigits(t *testing.T) {
+	for _, tc := range []struct {
+		current, total int
+		want           string
+	}{
+		{5, 1000, "   5/1000"},
+		{50, 1000, "  50/1000"},
+		{500, 1000, " 500/1000"},
+		{1000, 1000, "1000/1000"},
+		{0, 1, "0/1"},
+	} {
+		got := FractRender("/")(tc.current, tc.total)
+		if string(got) != tc.want {
+			t.Errorf("current=%d total=%d: expected %q, got %q", tc.current, tc.total, tc.want, got)
+		}
 	}
 }
 
@@ -184,10 +202,11 @@ func TestPercentRender(t *testing.T) {
 		current, total int
 		want           string
 	}{
-		{0, 10, "0%"},
-		{5, 10, "50%"},
+		{0, 10, "  0%"},
+		{5, 10, " 50%"},
 		{10, 10, "100%"},
-		{1, 3, "33%"},
+		{1, 3, " 33%"},
+		{1, 10, " 10%"},
 	} {
 		got := PercentRender()(tc.current, tc.total)
 		if string(got) != tc.want {
@@ -199,16 +218,17 @@ func TestPercentRender(t *testing.T) {
 func TestBarOptionsPresets(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		opts BarOptions
+		opts BarOptionsFunc
 		want string
 	}{
-		{"Rounded", RoundedBarOptions(), "(###>------)"},
-		{"Shade", ShadeBarOptions(), "█████░░░░░░░"},
-		{"Dot", DotBarOptions(), "(●●●●○○○○○○)"},
-		{"Minimal", MinimalBarOptions(), "####>-------"},
+		{"Rounded", WithRoundedBarOptions(), "(###>------)"},
+		{"Shade", WithShadeBarOptions(), "█████░░░░░░░"},
+		{"Dot", WithDotBarOptions(), "(●●●●○○○○○○)"},
+		{"Minimal", WithMinimalBarOptions(), "####>-------"},
+		{"Thin", WithThinBarOptions(), "▰▰▰▰▰▱▱▱▱▱▱▱"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := BarRender(12, WithBarOptions(tc.opts))(4, 10)
+			got := BarRender(12, tc.opts)(4, 10)
 			if string(got) != tc.want {
 				t.Errorf("expected %q, got %q", tc.want, got)
 			}
@@ -494,27 +514,38 @@ func TestDynamicRender_PassesCurrentAndTotalThrough(t *testing.T) {
 }
 
 func TestDynamicRender_PropagatesBuildPanicFree(t *testing.T) {
-	r := DynamicBarRender(func() int { return 0 }, 0.5)
+	r := DynamicBarRender(func() int { return 0 })
 	got := r(5, 10)
 	if len(got) != 0 {
 		t.Errorf("expected NoopRender-style empty output at width 0, got %q", got)
 	}
 }
 
-func TestDynamicBarRender_BuildsAtPortionOfWidth(t *testing.T) {
+func TestDynamicBarRender_BuildsAtGivenWidth(t *testing.T) {
 	opts := BarOptions{Start: "[", Full: "=", Divider: ">", Empty: " ", End: "]"}
-	r := DynamicBarRender(func() int { return 80 }, 0.5, WithBarOptions(opts))
+	r := DynamicBarRender(func() int { return 40 }, WithBarOptions(opts))
 
 	want := BarRender(40, WithBarOptions(opts))(5, 10)
 	got := r(5, 10)
 	if string(got) != string(want) {
-		t.Errorf("expected DynamicBarRender(width=80, portion=0.5) to match BarRender(40, ...), got %q want %q", got, want)
+		t.Errorf("expected DynamicBarRender(width=40) to match BarRender(40, ...), got %q want %q", got, want)
+	}
+}
+
+func TestDynamicBarRender_ComposesWithPortion(t *testing.T) {
+	opts := BarOptions{Start: "[", Full: "=", Divider: ">", Empty: " ", End: "]"}
+	r := DynamicBarRender(Portion(func() int { return 80 }, 0.5), WithBarOptions(opts))
+
+	want := BarRender(40, WithBarOptions(opts))(5, 10)
+	got := r(5, 10)
+	if string(got) != string(want) {
+		t.Errorf("expected DynamicBarRender(Portion(width=80, 0.5)) to match BarRender(40, ...), got %q want %q", got, want)
 	}
 }
 
 func TestDynamicBarRender_RebuildsOnWidthChange(t *testing.T) {
 	width := 80
-	r := DynamicBarRender(func() int { return width }, 0.5)
+	r := DynamicBarRender(func() int { return width })
 
 	first := r(5, 10)
 	width = 40
@@ -525,19 +556,29 @@ func TestDynamicBarRender_RebuildsOnWidthChange(t *testing.T) {
 	}
 }
 
-func TestDynamicSmoothBarRender_BuildsAtPortionOfWidth(t *testing.T) {
-	r := DynamicSmoothBarRender(func() int { return 80 }, 0.5)
+func TestDynamicSmoothBarRender_BuildsAtGivenWidth(t *testing.T) {
+	r := DynamicSmoothBarRender(func() int { return 40 })
 
 	want := SmoothBarRender(40)(5, 10)
 	got := r(5, 10)
 	if string(got) != string(want) {
-		t.Errorf("expected DynamicSmoothBarRender(width=80, portion=0.5) to match SmoothBarRender(40), got %q want %q", got, want)
+		t.Errorf("expected DynamicSmoothBarRender(width=40) to match SmoothBarRender(40), got %q want %q", got, want)
+	}
+}
+
+func TestDynamicSmoothBarRender_ComposesWithPortion(t *testing.T) {
+	r := DynamicSmoothBarRender(Portion(func() int { return 80 }, 0.5))
+
+	want := SmoothBarRender(40)(5, 10)
+	got := r(5, 10)
+	if string(got) != string(want) {
+		t.Errorf("expected DynamicSmoothBarRender(Portion(width=80, 0.5)) to match SmoothBarRender(40), got %q want %q", got, want)
 	}
 }
 
 func TestDynamicSmoothBarRender_RebuildsOnWidthChange(t *testing.T) {
 	width := 80
-	r := DynamicSmoothBarRender(func() int { return width }, 0.5)
+	r := DynamicSmoothBarRender(func() int { return width })
 
 	first := r(5, 10)
 	width = 40

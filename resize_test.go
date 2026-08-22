@@ -161,6 +161,27 @@ func TestCachedGetWidth_UpdatesOnlyAfterSignal(t *testing.T) {
 	waitForCondition(t, func() bool { return live() == 120 })
 }
 
+func TestCachedGetWidth_CoalescesBurstOfSignalsIntoOneRealCall(t *testing.T) {
+	sigwinch := make(chan struct{}, 4)
+	sigwinch <- struct{}{}
+	sigwinch <- struct{}{}
+	sigwinch <- struct{}{}
+
+	calls := &atomic.Int64{}
+	live := CachedGetWidth(sigwinch, func() int {
+		calls.Add(1)
+		return 80
+	})
+
+	waitForCondition(t, func() bool { return calls.Load() == 2 })
+	if got := live(); got != 80 {
+		t.Errorf("expected width 80, got %d", got)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("expected the burst of 3 pre-buffered signals to coalesce into 1 real getWidth call (2 total with the upfront one), got %d", got)
+	}
+}
+
 func TestCachedGetWidth_SafeForConcurrentReads(t *testing.T) {
 	sigwinch := make(chan struct{})
 	live := CachedGetWidth(sigwinch, func() int { return 80 })

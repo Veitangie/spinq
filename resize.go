@@ -25,17 +25,28 @@ import (
 //
 // This is the piece that makes width-aware code cheap to call from a hot
 // path: awareClearerDrawer's clear() (driven by WrapWithResizeDetection) and
-// any number of Dynamic-built FrameFuncs can all share the *same*
+// any number of Dynamic-built FrameFuncs can all share the same
 // CachedGetWidth output and each just do an atomic read, rather than each
 // hitting the real getWidth independently. Always prefer passing
 // CachedGetWidth's output into Dynamic over a raw getWidth - Dynamic is called
 // on every frame render, and a raw syscall-backed getWidth there reintroduces
-// exactly the per-call cost this function exists to avoid.
+// per-call cost this function exists to avoid.
 func CachedGetWidth(sigwinch <-chan struct{}, getWidth func() int) func() int {
 	current := atomic.Int64{}
 	current.Store(int64(getWidth()))
 	go func() {
 		for range sigwinch {
+		Drain:
+			for {
+				select {
+				case _, ok := <-sigwinch:
+					if !ok {
+						break Drain
+					}
+				default:
+					break Drain
+				}
+			}
 			current.Store(int64(getWidth()))
 		}
 	}()

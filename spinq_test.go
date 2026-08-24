@@ -25,6 +25,15 @@ func TestEvery_TicksAtRoughlyTheGivenInterval(t *testing.T) {
 	}
 }
 
+func TestEvery_NonPositiveDurationDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Every(0) panicked: %v", r)
+		}
+	}()
+	_ = Every(0)
+}
+
 func TestDefault_FieldsAreSane(t *testing.T) {
 	opt := Default()
 
@@ -272,6 +281,17 @@ func TestJustStart_OptionsAreApplied(t *testing.T) {
 	pair.Close()
 }
 
+func TestJustStart_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
+	pair, err := JustStart(nil, WithFrame(Static("custom")), nil, WithTicker(make(chan time.Time)), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pair == nil {
+		t.Fatal("expected a non-nil pair")
+	}
+	pair.Close()
+}
+
 func withCIUnset(t *testing.T) {
 	t.Helper()
 	orig, wasSet := os.LookupEnv("CI")
@@ -293,6 +313,30 @@ func withRealTerminalStdio(t *testing.T) {
 	origStdout, origStderr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outTTY, errTTY
 	t.Cleanup(func() { os.Stdout, os.Stderr = origStdout, origStderr })
+}
+
+func TestJustStart_StartContextStaysIndependentFromContext(t *testing.T) {
+	withRealTerminalStdio(t)
+
+	pairCtx, cancelPair := context.WithCancel(context.Background())
+	defer cancelPair()
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	defer cancelStart()
+
+	pair, err := JustStart(WithContext(pairCtx), WithStartContext(startCtx))
+	if err != nil {
+		t.Fatalf("JustStart: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	real := asReal(t, pair.Spinny)
+	if !real.st.running.Load() {
+		t.Fatal("expected the spinner to be running immediately after JustStart")
+	}
+
+	cancelStart()
+
+	waitForCondition(t, func() bool { return !real.st.running.Load() })
 }
 
 func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {

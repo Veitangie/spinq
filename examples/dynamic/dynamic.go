@@ -16,7 +16,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	getWidth, err := spinq.DefaultGetWidth(ctx)
+	resizeOpt, getWidth, err := spinq.WrapDefaultResizeDetection(ctx)
 	if err != nil {
 		fmt.Printf("Failed to detect terminal width: %s\n", err.Error())
 		os.Exit(1)
@@ -33,8 +33,7 @@ func main() {
 	)
 	getFrame := spinq.Progress(func() (int, int) { return int(count.Load()), total }, render)
 
-	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond),
-		spinq.WrapWithResizeDetection(getWidth))
+	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond), resizeOpt)
 	if err != nil {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
@@ -58,5 +57,5 @@ func main() {
 	}
 	wg.Wait()
 
-	p.Spinny.StopNoClear(" " + spinq.Green + "done" + spinq.ResetColor + "\n")
+	p.Spinny.StopNoClear(" " + spinq.Green + "done" + spinq.ResetStyle + "\n")
 }

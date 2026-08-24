@@ -10,13 +10,13 @@ import (
 	"io"
 )
 
-// SpinqWriter is the interface shared by SpinqPair's Standard and Spinny
-// writers: a normal io.Writer, plus the spinner's own lifecycle control.
+// SpinqWriter is a normal io.Writer, plus the spinner's own lifecycle control.
 //
 //   - Start begins drawing frames immediately and on every tick of the
 //     Pair's ticker, until Stop/StopWith/StopNoClear is called, ctx is
-//     cancelled, or the Pair is Closed. Calling it while already running is
-//     a no-op that returns nil.
+//     cancelled, or the Pair is Closed. A nil ctx defaults to the Pair's
+//     own governing context, the same as leaving JustStartOptions.StartContext
+//     unset. Calling it while already running is a no-op that returns nil.
 //   - Stop halts the spinner and clears its last-drawn frame.
 //   - StopWith halts the spinner and replaces its frame with a message,
 //     without clearing.
@@ -29,6 +29,11 @@ import (
 //     or is a no-op passthrough - false whenever WrapFilePair/WrapOS/
 //     JustStart fell back because the underlying stream isn't a real
 //     terminal, true otherwise.
+//   - GetWidth returns the getWidth func this writer actually uses to size
+//     its own rendering - see WrapWithResizeDetection/WrapWithDefaultResizeDetection.
+//     Never nil: -1 means resize detection wasn't configured, or (for a
+//     passthrough writer) there's no terminal to size against - safe to
+//     call GetWidth()() directly without a nil check.
 //
 // Two implementations exist: SpinqWriterReal, backed by a live spinner
 // actor, and SpinqWriterPassthrough, a plain passthrough used whenever
@@ -42,6 +47,7 @@ type SpinqWriter interface {
 	StopNoClear(string) error
 	Set(FrameFunc) error
 	IsReal() bool
+	GetWidth() func() int
 	close()
 }
 
@@ -68,13 +74,16 @@ func (sw SpinqWriterPassthrough) Set(_ FrameFunc) error { return nil }
 
 func (sw SpinqWriterPassthrough) IsReal() bool { return false }
 
+func (sw SpinqWriterPassthrough) GetWidth() func() int { return func() int { return -1 } }
+
 func (sw SpinqWriterPassthrough) close() {}
 
 // SpinqWriterReal is a SpinqWriter backed by a live spinner actor, as
 // constructed by WrapPair.
 type SpinqWriterReal struct {
-	st      *spinnerState
-	wrapped io.Writer
+	st       *spinnerState
+	wrapped  io.Writer
+	getWidth func() int
 }
 
 var _ SpinqWriter = SpinqWriterReal{}
@@ -131,6 +140,8 @@ func (sw SpinqWriterReal) Set(getFrame FrameFunc) error {
 }
 
 func (sw SpinqWriterReal) IsReal() bool { return true }
+
+func (sw SpinqWriterReal) GetWidth() func() int { return sw.getWidth }
 
 func (sw SpinqWriterReal) close() {
 	sw.st.close()

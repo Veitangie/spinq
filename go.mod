@@ -2,8 +2,6 @@ module veitangie.dev/spinq
 
 go 1.25.0
 
-require github.com/mattn/go-runewidth v0.0.27
-
 require golang.org/x/sys v0.47.0 // indirect
 
 require (

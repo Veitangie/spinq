@@ -107,7 +107,7 @@ func (st *spinnerState) startBackground() {
 					}
 
 					if typed.clear && st.needClear {
-						lastFrame = append(clearBytes, lastFrame...)
+						lastFrame = append(ClearLineBytes, lastFrame...)
 						st.needClear = false
 					}
 					st.frame = []byte{}

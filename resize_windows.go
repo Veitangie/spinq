@@ -15,9 +15,10 @@ import (
 // DefaultGetWidth is the Windows counterpart to resize_unix.go's
 // version: there's no SIGWINCH equivalent, so it drives DefaultSigwinch's
 // polling analogue (SigwinchFromPoller) instead of a real signal. A nil ctx
-// defaults to context.Background(). Returns an error (falling both
-// WithDefaultResizeDetection and WrapWithDefaultResizeDetection back to a
-// no-op) whenever os.Stderr isn't a real console.
+// defaults to context.Background(). Returns an error (falling
+// WithDefaultResizeDetection, WrapWithDefaultResizeDetection, and
+// DefaultResizeDetection/WrapDefaultResizeDetection all back to a safe
+// fallback) whenever os.Stderr isn't a real console.
 func DefaultGetWidth(ctx context.Context) (func() int, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -36,7 +37,9 @@ func DefaultGetWidth(ctx context.Context) (func() int, error) {
 // (there's no SIGWINCH on Windows) to detect a resize. ctx governs the
 // lifetime of the background poller; a nil ctx defaults to
 // context.Background(). Falls back to a no-op if os.Stderr isn't a real
-// console.
+// console. If you also need the getWidth it wired up - e.g. to size a
+// DynamicBarRender built for the same call - use DefaultResizeDetection
+// instead, which returns both.
 func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {
@@ -46,7 +49,9 @@ func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
 }
 
 // WrapWithDefaultResizeDetection is WithDefaultResizeDetection for the
-// lower-level WrapPair/WrapFilePair/WrapOS family.
+// lower-level WrapPair/WrapFilePair/WrapOS family. If you also need the
+// getWidth it wired up, use WrapDefaultResizeDetection instead, which
+// returns both.
 func WrapWithDefaultResizeDetection(ctx context.Context) WrapOptionsFunc {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {

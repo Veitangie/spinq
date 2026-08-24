@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/clipperhouse/displaywidth"
-	"veitangie.dev/spinq/internal/stripansi"
 )
 
 // RenderFunc renders a progress bar/counter from a (current, total)
@@ -357,17 +356,18 @@ func WithBarOptions(opt BarOptions) BarOptionsFunc {
 // cells wide, using sub-cell-precision divider glyphs (see
 // SmoothWithDivider) at the boundary between filled and empty for smoother
 // visual movement than BarRender's single fixed divider. It renders at a
-// constant width across every progress level except one deliberate
-// exception: at exactly 100% (or 0% with Direction: Left), the boundary
-// divider is dropped in favor of a plain Full/Empty cell, since forcing a
-// mismatched divider glyph there would look more glitchy, not less.
+// constant width across every progress level, except at exactly 100% (or
+// 0% with Direction: Left), where the boundary divider is dropped in
+// favor of a plain Full/Empty cell.
 //
 // It returns NoopRender if length leaves no room for the bar, or if the
 // configured glyphs don't all render at a consistent width.
 func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 	opt := DefaultSmoothBarOptions()
 	for _, f := range opts {
-		opt = f(opt)
+		if f != nil {
+			opt = f(opt)
+		}
 	}
 
 	if len(opt.Dividers) < 2 {
@@ -387,21 +387,21 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	divLength := displaywidth.String(stripansi.Strip(opt.Dividers[0]))
+	divLength := displaywidth.String(StripANSI(opt.Dividers[0]))
 	for _, div := range opt.Dividers[1:] {
-		if divLength != displaywidth.String(stripansi.Strip(div)) {
+		if divLength != displaywidth.String(StripANSI(div)) {
 			return NoopRender()
 		}
 	}
-	constPartLength := displaywidth.String(stripansi.Strip(opt.Start)) +
-		displaywidth.String(stripansi.Strip(opt.End))
+	constPartLength := displaywidth.String(StripANSI(opt.Start)) +
+		displaywidth.String(StripANSI(opt.End))
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := displaywidth.String(stripansi.Strip(opt.Empty))
-	if unitLength != displaywidth.String(stripansi.Strip(opt.Full)) || unitLength != divLength || unitLength > length {
+	unitLength := displaywidth.String(StripANSI(opt.Empty))
+	if unitLength != displaywidth.String(StripANSI(opt.Full)) || unitLength != divLength || unitLength > length {
 		return NoopRender()
 	}
 
@@ -452,23 +452,25 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 func BarRender(length int, opts ...BarOptionsFunc) RenderFunc {
 	opt := DefaultBarOptions()
 	for _, f := range opts {
-		opt = f(opt)
+		if f != nil {
+			opt = f(opt)
+		}
 	}
 
 	if opt.Direction {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	constPartLength := displaywidth.String(stripansi.Strip(opt.Start)) +
-		displaywidth.String(stripansi.Strip(opt.Divider)) +
-		displaywidth.String(stripansi.Strip(opt.End))
+	constPartLength := displaywidth.String(StripANSI(opt.Start)) +
+		displaywidth.String(StripANSI(opt.Divider)) +
+		displaywidth.String(StripANSI(opt.End))
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := displaywidth.String(stripansi.Strip(opt.Empty))
-	if unitLength != displaywidth.String(stripansi.Strip(opt.Full)) || unitLength > length {
+	unitLength := displaywidth.String(StripANSI(opt.Empty))
+	if unitLength != displaywidth.String(StripANSI(opt.Full)) || unitLength > length {
 		return NoopRender()
 	}
 
@@ -551,11 +553,15 @@ type RenderWidthFunc func(int) RenderFunc
 // RenderFunc, so a width-reactive bar still composes with FractRender,
 // PercentRender, and friends the same way a fixed-width one does.
 //
-// getWidth is called on every call to the returned RenderFunc - once per
-// frame render, which spinq treats as a hot path. Always pass the func
-// CachedGetWidth returns here, never a raw syscall-backed getWidth directly -
-// see Dynamic's doc comment for why.
+// getWidth is called on every call to the returned RenderFunc - a hot
+// path. Always pass CachedGetWidth's output here, never a raw
+// syscall-backed getWidth directly; see CachedGetWidth. A nil getWidth or
+// nil build returns NoopRender.
 func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
+	if getWidth == nil || build == nil {
+		return NoopRender()
+	}
+
 	width := getWidth()
 	currentRender := build(width)
 
@@ -571,10 +577,9 @@ func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
 
 // DynamicBarRender is BarRender sized by getWidth instead of a fixed length -
 // DynamicRender applied to BarRender. getWidth is called on every render, so
-// pass CachedGetWidth's output, not a raw one; shape it first with
-// Offset/Portion/Clamp if you want a fraction of the terminal, room reserved
-// for fixed-width siblings, or a bounded range, rather than the raw width
-// verbatim.
+// pass CachedGetWidth's output, not a raw one; shape it with
+// Offset/Portion/Clamp for a fraction of the terminal, room reserved for
+// fixed-width siblings, or a bounded range.
 func DynamicBarRender(getWidth func() int, opts ...BarOptionsFunc) RenderFunc {
 	return DynamicRender(getWidth, func(width int) RenderFunc {
 		return BarRender(width, opts...)

@@ -43,7 +43,7 @@ func main() {
 			time.Sleep(time.Duration(rand.Int63n(5000 * int64(time.Millisecond))))
 			fmt.Fprintf(stdout, "Worker %d is doing stuff\n", i)
 			if i%10 == 0 {
-				fmt.Fprintf(stderr, "%sWorker %d FAILED%s\n", spinq.Red, i, spinq.ResetColor)
+				fmt.Fprintf(stderr, "%sWorker %d FAILED%s\n", spinq.Red, i, spinq.ResetStyle)
 			}
 			count.Add(1)
 		}(i)
@@ -51,5 +51,5 @@ func main() {
 
 	latch.Done()
 	wg.Wait()
-	p.Spinny.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetColor + " Done\n")
+	p.Spinny.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetStyle + " Done\n")
 }

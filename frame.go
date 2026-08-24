@@ -24,14 +24,14 @@ var ErrNoFrame error = errors.New("no frame")
 // these package-level slices afterward has no effect on FrameFuncs already
 // built from it.
 var (
-	DotsStates      []string = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	LineStates      []string = []string{"-", "\\", "|", "/"}
-	ArrowStates     []string = []string{"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
-	PipeStates      []string = []string{"┤", "┘", "┴", "└", "├", "┌", "┬", "┐"}
-	FlyTroughStates []string = []string{"[    ]", "[=   ]", "[==  ]", "[ == ]", "[  ==]", "[   =]", "[    ]"}
-	BounceStates    []string = []string{"[    ]", "[=   ]", "[==  ]", "[ == ]", "[  ==]", "[   =]", "[    ]", "[   =]", "[  ==]", "[ == ]", "[==  ]", "[=   ]"}
-	GrowingStates   []string = []string{" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂", "▁"}
-	BinaryStates    []string = []string{"010010", "001100", "100101", "111010", "011000", "111100", "110101", "100010"}
+	DotsStates       []string = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	LineStates       []string = []string{"-", "\\", "|", "/"}
+	ArrowStates      []string = []string{"↑", "↗", "→", "↘", "↓", "↙", "←", "↖"}
+	PipeStates       []string = []string{"┤", "┘", "┴", "└", "├", "┌", "┬", "┐"}
+	FlyThroughStates []string = []string{"[    ]", "[=   ]", "[==  ]", "[ == ]", "[  ==]", "[   =]", "[    ]"}
+	BounceStates     []string = []string{"[    ]", "[=   ]", "[==  ]", "[ == ]", "[  ==]", "[   =]", "[    ]", "[   =]", "[  ==]", "[ == ]", "[==  ]", "[=   ]"}
+	GrowingStates    []string = []string{" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂", "▁"}
+	BinaryStates     []string = []string{"010010", "001100", "100101", "111010", "011000", "111100", "110101", "100010"}
 )
 
 // FrameFunc produces one frame of spinner/progress output on each call.
@@ -141,21 +141,26 @@ func DefaultDurationFormat() func(d time.Duration) string {
 }
 
 // DurationOptionsFunc configures a DurationOptions value; see
-// DurationWithFormat and DurationStartAt.
+// DurationWithFormat and DurationWithStartAt.
 type DurationOptionsFunc func(DurationOptions) DurationOptions
 
 // DurationWithFormat sets Duration's format function, which renders the
-// elapsed time.Duration as the frame's text.
+// elapsed time.Duration as the frame's text. A nil format is a no-op,
+// leaving any previously configured Format untouched.
 func DurationWithFormat(format func(d time.Duration) string) DurationOptionsFunc {
+	if format == nil {
+		return func(do DurationOptions) DurationOptions { return do }
+	}
+
 	return func(do DurationOptions) DurationOptions {
 		do.Format = format
 		return do
 	}
 }
 
-// DurationStartAt sets an explicit start time for Duration, overriding its
+// DurationWithStartAt sets an explicit start time for Duration, overriding its
 // default of capturing the time of the FrameFunc's first call.
-func DurationStartAt(startAt time.Time) DurationOptionsFunc {
+func DurationWithStartAt(startAt time.Time) DurationOptionsFunc {
 	return func(do DurationOptions) DurationOptions {
 		do.StartAt = &startAt
 		return do
@@ -164,17 +169,24 @@ func DurationStartAt(startAt time.Time) DurationOptionsFunc {
 
 // Duration returns a FrameFunc that renders the elapsed time since a start
 // point, formatted by opt.Format (DefaultDurationFormat by default). Unless
-// DurationStartAt overrides it, the start point is captured lazily on the
+// DurationWithStartAt overrides it, the start point is captured lazily on the
 // FrameFunc's first call rather than when Duration itself is constructed,
 // so any gap between building the frame and actually starting the spinner
-// doesn't inflate the first reading. A nil timer returns Noop.
+// doesn't inflate the first reading. A nil timer, or an opt.Format left
+// (or set) nil, returns Noop.
 func Duration(timer func() time.Time, opts ...DurationOptionsFunc) FrameFunc {
 	if timer == nil {
 		return Noop()
 	}
 	opt := DefaultDurationOptions()
 	for _, f := range opts {
-		opt = f(opt)
+		if f != nil {
+			opt = f(opt)
+		}
+	}
+
+	if opt.Format == nil {
+		return Noop()
 	}
 
 	var startAt time.Time
@@ -198,18 +210,25 @@ func Duration(timer func() time.Time, opts ...DurationOptionsFunc) FrameFunc {
 
 // Random returns a FrameFunc that picks a state uniformly at random on
 // every call. By default it draws from math/rand/v2's package-level
-// (concurrency-safe) source; passing a *rand.Rand uses that instead - in
-// which case, since spinq guarantees this FrameFunc is never called
-// concurrently with itself, the *rand.Rand only needs its own
-// synchronization if something outside this FrameFunc also touches it.
-// Extra *rand.Rand arguments beyond the first are ignored. An empty states
-// returns Noop; a single state returns Static.
+// (concurrency-safe) source; the first non-nil entry in rands is used
+// instead if there is one, and only needs its own synchronization if
+// something outside this FrameFunc also touches it (spinq itself never
+// calls it concurrently). Every other entry in rands, nil or not, is
+// ignored. An empty states returns Noop; a single state returns Static.
 func Random(states []string, rands ...*rand.Rand) FrameFunc {
 	if len(states) == 0 {
 		return Noop()
 	}
 	if len(states) == 1 {
 		return Static(states[0])
+	}
+
+	var actualRand *rand.Rand
+	for _, rnd := range rands {
+		if rnd != nil {
+			actualRand = rnd
+			break
+		}
 	}
 
 	statesBytes := make([][]byte, 0, len(states))
@@ -219,8 +238,8 @@ func Random(states []string, rands ...*rand.Rand) FrameFunc {
 
 	return func() ([]byte, error) {
 		idx := 0
-		if len(rands) != 0 {
-			idx = rands[0].IntN(len(statesBytes))
+		if actualRand != nil {
+			idx = actualRand.IntN(len(statesBytes))
 		} else {
 			idx = rand.IntN(len(statesBytes))
 		}
@@ -245,6 +264,14 @@ func RandomOnceEvery(states []string, mod int, rands ...*rand.Rand) FrameFunc {
 		return Random(states, rands...)
 	}
 
+	var actualRand *rand.Rand
+	for _, rnd := range rands {
+		if rnd != nil {
+			actualRand = rnd
+			break
+		}
+	}
+
 	statesBytes := make([][]byte, 0, len(states))
 	for _, state := range states {
 		statesBytes = append(statesBytes, []byte(state))
@@ -252,16 +279,16 @@ func RandomOnceEvery(states []string, mod int, rands ...*rand.Rand) FrameFunc {
 
 	skipper := 0
 	idx := 0
-	if len(rands) != 0 {
-		idx = rands[0].IntN(len(statesBytes))
+	if actualRand != nil {
+		idx = actualRand.IntN(len(statesBytes))
 	} else {
 		idx = rand.IntN(len(statesBytes))
 	}
 	return func() ([]byte, error) {
 		if skipper == mod {
 			skipper = 0
-			if len(rands) != 0 {
-				idx = rands[0].IntN(len(statesBytes))
+			if actualRand != nil {
+				idx = actualRand.IntN(len(statesBytes))
 			} else {
 				idx = rand.IntN(len(statesBytes))
 			}
@@ -379,13 +406,14 @@ type WidthFunc func(width int) FrameFunc
 // animated/progressing content (a moving spinner, an advancing percentage)
 // keeps updating every call, not just on resize.
 //
-// getWidth is called on every call to the returned FrameFunc - once per
-// frame render, which spinq treats as a hot path. Always pass the func
-// CachedGetWidth returns here, never a raw syscall-backed getWidth directly:
-// CachedGetWidth is what makes this cheap, both for a single Dynamic instance
-// and for however many are joined together in one frame, since they can all
-// share its output rather than each paying for their own real query.
+// getWidth is called on every call to the returned FrameFunc - a hot
+// path. Always pass CachedGetWidth's output here, never a raw
+// syscall-backed getWidth directly; see CachedGetWidth. A nil getWidth or
+// nil build returns Noop.
 func Dynamic(getWidth func() int, build WidthFunc) FrameFunc {
+	if getWidth == nil || build == nil {
+		return Noop()
+	}
 	width := getWidth()
 	current := build(width)
 

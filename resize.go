@@ -16,21 +16,12 @@ import (
 )
 
 // CachedGetWidth wraps a (possibly expensive, e.g. syscall-backed) getWidth
-// behind a cheap, freely shareable one: it calls the real getWidth once up
-// front and again each time sigwinch signals, caching the result in an
-// atomic that the returned func just reads. This is the one legitimate
-// consumer of a raw sigwinch channel for width purposes - channels aren't
-// broadcast, so only one reader can safely drain a given sigwinch, but many
-// readers can safely call the func CachedGetWidth hands back.
-//
-// This is the piece that makes width-aware code cheap to call from a hot
-// path: awareClearerDrawer's clear() (driven by WrapWithResizeDetection) and
-// any number of Dynamic-built FrameFuncs can all share the same
-// CachedGetWidth output and each just do an atomic read, rather than each
-// hitting the real getWidth independently. Always prefer passing
-// CachedGetWidth's output into Dynamic over a raw getWidth - Dynamic is called
-// on every frame render, and a raw syscall-backed getWidth there reintroduces
-// per-call cost this function exists to avoid.
+// behind a cheap, shareable one: it calls the real getWidth once up front
+// and again on each sigwinch signal, caching the result in an atomic the
+// returned func just reads. Only one reader can safely drain a given
+// sigwinch channel, but the returned func itself can be called freely
+// from anywhere - always prefer passing its output into
+// Dynamic/DynamicRender/WrapWithResizeDetection over a raw getWidth.
 func CachedGetWidth(sigwinch <-chan struct{}, getWidth func() int) func() int {
 	current := atomic.Int64{}
 	current.Store(int64(getWidth()))
@@ -57,12 +48,11 @@ func CachedGetWidth(sigwinch <-chan struct{}, getWidth func() int) func() int {
 
 // WidthFromFile returns a getWidth func that queries file's terminal width
 // on every call via a real syscall (x/term.GetSize) - suitable as the raw
-// getWidth passed into CachedGetWidth, but not cheap enough to call on every
-// clear() or every frame render directly, so never hand its output straight
-// to WrapWithResizeDetection/WithResizeDetection or Dynamic/DynamicRender -
-// wrap it yourself or pass it to CachedGetWidth first. Errors once up front if file isn't a real
-// terminal (or is nil); the returned func itself never errors, returning 0
-// instead if a later query fails (e.g. the file closed).
+// getWidth for CachedGetWidth, but too expensive to pass directly to
+// WrapWithResizeDetection/WithResizeDetection or Dynamic/DynamicRender;
+// wrap it in CachedGetWidth first. Errors once up front if file isn't a
+// real terminal (or is nil); the returned func itself never errors,
+// returning 0 if a later query fails (e.g. the file closed).
 func WidthFromFile(file *os.File) (func() int, error) {
 	if file == nil {
 		return nil, errors.New("unable to determine width for nil file")
@@ -108,12 +98,21 @@ func SigwinchFromAny(in <-chan any) <-chan struct{} {
 // for platforms (Windows) with no real resize event to hook into. d is
 // entirely your choice - it's the ceiling on how stale the terminal width
 // can get before spinq notices, traded directly against how often the real
-// getWidth ends up getting called. ctx governs its lifetime: cancelling it
-// stops the background goroutine and closes the returned channel. Like
+// getWidth ends up getting called. A non-positive d returns nil (a channel
+// that never signals). ctx governs its lifetime: cancelling it stops the
+// background goroutine and closes the returned channel; a nil ctx returns
+// an already-closed channel instead, without starting a goroutine. Like
 // DefaultSigwinch and unlike Every, that cleanup is not optional - an
 // abandoned goroutine here is a live GC root that never gets collected.
 func SigwinchFromPoller(ctx context.Context, d time.Duration) <-chan struct{} {
+	if d <= 0 {
+		return nil
+	}
 	sigwinch := make(chan struct{}, 1)
+	if ctx == nil {
+		close(sigwinch)
+		return sigwinch
+	}
 	go func() {
 		defer close(sigwinch)
 		ticker := time.NewTicker(d)
@@ -130,6 +129,38 @@ func SigwinchFromPoller(ctx context.Context, d time.Duration) <-chan struct{} {
 		}
 	}()
 	return sigwinch
+}
+
+// DefaultResizeDetection is WithDefaultResizeDetection, but also returns
+// the getWidth it wired up so it can be reused elsewhere - e.g. shaped with
+// Offset/Portion/Clamp to size a DynamicBarRender/Dynamic FrameFunc built
+// for the same JustStart call, or fetched later via SpinqWriter.GetWidth.
+// On failure (usually os.Stderr not being a real terminal), both return
+// values stay safe to use unconditionally: the JustStartOptionsFunc falls
+// back to the same no-op WithDefaultResizeDetection's own failure path
+// uses, and getWidth reports -1 (nothing to detect), the same value
+// GetWidth() reports for any writer with no resize detection to draw
+// against. The error is still returned so the caller can tell success from
+// failure if they care to.
+func DefaultResizeDetection(ctx context.Context) (JustStartOptionsFunc, func() int, error) {
+	getWidth, err := DefaultGetWidth(ctx)
+	if err != nil {
+		return noop(), func() int { return -1 }, err
+	}
+
+	return WithResizeDetection(getWidth), getWidth, nil
+}
+
+// WrapDefaultResizeDetection is WrapWithDefaultResizeDetection, but also
+// returns the getWidth it wired up, for the same reasons and with the same
+// safe-on-failure behavior as DefaultResizeDetection - see its doc comment.
+func WrapDefaultResizeDetection(ctx context.Context) (WrapOptionsFunc, func() int, error) {
+	getWidth, err := DefaultGetWidth(ctx)
+	if err != nil {
+		return func(wo WrapOptions) WrapOptions { return wo }, func() int { return -1 }, err
+	}
+
+	return WrapWithResizeDetection(getWidth), getWidth, nil
 }
 
 // Offset returns width adjusted by delta columns - negative to reserve room

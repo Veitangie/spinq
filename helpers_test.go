@@ -5,6 +5,7 @@ package spinq
 
 import (
 	"bytes"
+	"io"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -106,11 +107,11 @@ func staticFrame(b []byte) FrameFunc {
 	}
 }
 
-func asReal(t *testing.T, sw SpinqWriter) SpinqWriterReal {
+func asReal(t *testing.T, w io.Writer) SpinqWriterReal {
 	t.Helper()
-	real, ok := sw.(SpinqWriterReal)
+	real, ok := w.(SpinqWriterReal)
 	if !ok {
-		t.Fatalf("expected SpinqWriterReal, got %T", sw)
+		t.Fatalf("expected SpinqWriterReal, got %T", w)
 	}
 	return real
 }

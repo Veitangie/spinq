@@ -43,14 +43,14 @@ func DefaultSigwinch(ctx context.Context) <-chan struct{} {
 	return sigwinch
 }
 
-// SigwinchFromOs adapts a caller-owned <-chan os.Signal into spinq's plain
+// SigwinchFromOS adapts a caller-owned <-chan os.Signal into spinq's plain
 // "something changed" shape, filtering out anything that isn't SIGWINCH.
 // Use this if you already run your own signal.Notify for other signals and
 // want to fold SIGWINCH handling into it, rather than giving spinq its own
 // dedicated registration via DefaultSigwinch. The returned channel closes
 // once in is closed; spinq never closes in itself, that's the caller's
 // signal.Stop to make.
-func SigwinchFromOs(in <-chan os.Signal) <-chan struct{} {
+func SigwinchFromOS(in <-chan os.Signal) <-chan struct{} {
 	sigwinch := make(chan struct{}, 1)
 	go func() {
 		defer close(sigwinch)
@@ -66,11 +66,12 @@ func SigwinchFromOs(in <-chan os.Signal) <-chan struct{} {
 	return sigwinch
 }
 
-// DefaultGetWidth is the shared core behind WithDefaultResizeDetection
-// and WrapWithDefaultResizeDetection: os.Stderr sized via WidthFromFile, real
+// DefaultGetWidth is the shared core behind WithDefaultResizeDetection,
+// WrapWithDefaultResizeDetection, and DefaultResizeDetection/
+// WrapDefaultResizeDetection: os.Stderr sized via WidthFromFile, real
 // SIGWINCH via DefaultSigwinch. A nil ctx defaults to context.Background().
-// Returns an error whenever os.Stderr isn't a real terminal, which both
-// callers turn into a no-op rather than propagating.
+// Returns an error whenever os.Stderr isn't a real terminal, which all four
+// callers turn into a safe fallback rather than propagating.
 func DefaultGetWidth(ctx context.Context) (func() int, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -88,7 +89,9 @@ func DefaultGetWidth(ctx context.Context) (func() int, error) {
 // SIGWINCH handler to detect a resize. ctx governs the lifetime of that
 // handler (see DefaultSigwinch); a nil ctx defaults to
 // context.Background(). Falls back to a no-op if os.Stderr isn't a real
-// terminal.
+// terminal. If you also need the getWidth it wired up - e.g. to size a
+// DynamicBarRender built for the same call - use DefaultResizeDetection
+// instead, which returns both.
 func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {
@@ -98,7 +101,9 @@ func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
 }
 
 // WrapWithDefaultResizeDetection is WithDefaultResizeDetection for the
-// lower-level WrapPair/WrapFilePair/WrapOS family.
+// lower-level WrapPair/WrapFilePair/WrapOS family. If you also need the
+// getWidth it wired up, use WrapDefaultResizeDetection instead, which
+// returns both.
 func WrapWithDefaultResizeDetection(ctx context.Context) WrapOptionsFunc {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {

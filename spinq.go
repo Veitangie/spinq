@@ -10,42 +10,15 @@ import (
 	"time"
 )
 
-// ANSI escape sequences for building colored/cursor-aware FrameFuncs.
-// spinq itself never emits color - these are plain convenience constants
-// for callers who want to, e.g. via Static or a custom FrameFunc; keeping
-// color entirely the caller's choice.
-const (
-	HideCursor = "\033[?25l"
-	ShowCursor = "\033[?25h"
-	ResetColor = "\033[0m"
-	Red        = "\033[31m"
-	Yellow     = "\033[33m"
-	Green      = "\033[32m"
-	Cyan       = "\033[0;36m"
-	Blue       = "\033[34m"
-	Magenta    = "\033[0;35m"
-	Gray       = "\033[90m"
-)
-
-// Byte-slice forms of the ANSI constants above, for callers building frames
-// as []byte without repeated string-to-[]byte conversions.
-var (
-	HideCursorBytes = []byte(HideCursor)
-	ShowCursorBytes = []byte(ShowCursor)
-	ResetColorBytes = []byte(ResetColor)
-	RedBytes        = []byte(Red)
-	YellowBytes     = []byte(Yellow)
-	GreenBytes      = []byte(Green)
-	CyanBytes       = []byte(Cyan)
-	BlueBytes       = []byte(Blue)
-	MagentaBytes    = []byte(Magenta)
-	GrayBytes       = []byte(Gray)
-)
-
 // Every returns a ticker channel that fires roughly every d - a thin
 // convenience wrapper around time.NewTicker(d).C for use as WrapPair's or
-// JustStart's ticker argument.
+// JustStart's ticker argument. A non-positive d returns nil (a channel
+// that never fires) instead of panicking; WrapPair/WrapFilePair/WrapOS
+// reject a nil ticker with a clean error.
 func Every(d time.Duration) <-chan time.Time {
+	if d <= 0 {
+		return nil
+	}
 	return time.NewTicker(d).C
 }
 
@@ -121,7 +94,8 @@ func WithTicker(ticker <-chan time.Time) JustStartOptionsFunc {
 	}
 }
 
-// WithDuration sets the ticker driving redraws to Every(d).
+// WithDuration sets the ticker driving redraws to Every(d). A non-positive
+// d (see Every) makes JustStart fail with a clean error.
 func WithDuration(d time.Duration) JustStartOptionsFunc {
 	return func(jso JustStartOptions) JustStartOptions {
 		jso.Ticker = Every(d)
@@ -172,12 +146,12 @@ func WithDivider(div string) JustStartOptionsFunc {
 }
 
 // WithResizeDetection enables width-aware clearing/cropping for JustStart:
-// getWidth reports the current terminal width on demand. Pass an already-
-// cheap getWidth - typically CachedGetWidth's output, shaped with
-// Offset/Portion/Clamp as needed - since it may be called on every
-// clear()/Write(), not just on an actual resize; see WithDefaultResizeDetection
-// for a zero-configuration source. A nil getWidth is a no-op, leaving resize
-// detection off.
+// getWidth reports the current terminal width on demand, and may be
+// called on every clear()/Write(), not just on a resize - pass an
+// already-cheap source (typically CachedGetWidth's output), shaped with
+// Offset/Portion/Clamp as needed. See WithDefaultResizeDetection/
+// DefaultResizeDetection for zero-configuration sources. A nil getWidth
+// is a no-op, leaving resize detection off.
 func WithResizeDetection(getWidth func() int) JustStartOptionsFunc {
 	if getWidth == nil {
 		return noop()
@@ -210,7 +184,9 @@ func Default() JustStartOptions {
 func JustStart(opts ...JustStartOptionsFunc) (*SpinqPair, error) {
 	opt := Default()
 	for _, f := range opts {
-		opt = f(opt)
+		if f != nil {
+			opt = f(opt)
+		}
 	}
 	if opt.StartContext == nil {
 		opt.StartContext = opt.Context

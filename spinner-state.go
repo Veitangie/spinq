@@ -18,17 +18,12 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-var clearBytes []byte = []byte("\r\033[K")
-
 // ErrClosed is returned by any SpinqWriter method called after the Pair has
 // been Closed (or its governing context cancelled).
 var ErrClosed error = errors.New("spinner closed")
 
-// ErrAlreadyRunning is an internal signal used between the background actor
-// and Start's caller-side code to distinguish a genuine fresh start from a
-// redundant call while already running. It is never actually returned to a
-// SpinqWriter.Start caller - Start translates it to a nil (successful,
-// idempotent) result.
+// ErrAlreadyRunning signals a redundant Start call while already running.
+// Start never returns it to the caller - it's translated to nil.
 var ErrAlreadyRunning error = errors.New("spinner already running")
 
 type spinnerState struct {
@@ -94,6 +89,9 @@ func (st *spinnerState) start(ctx context.Context) error {
 	case st.task <- msg:
 	case <-st.ctx.Done():
 		return ErrClosed
+	}
+	if ctx == nil {
+		ctx = st.ctx
 	}
 
 	select {

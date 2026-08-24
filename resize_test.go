@@ -5,7 +5,10 @@ package spinq
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -129,6 +132,36 @@ func TestSigwinchFromPoller_FiresPeriodicallyAndClosesOnCancel(t *testing.T) {
 
 	cancel()
 	drainUntilClosed(t, sigwinch, 2*time.Second)
+}
+
+func TestSigwinchFromPollerNonPositiveDurationHelperProcess(t *testing.T) {
+	if os.Getenv("SPINQ_POLLER_NONPOS_DURATION_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper; see TestSigwinchFromPoller_NonPositiveDurationDoesNotCrashProcess")
+	}
+
+	_ = SigwinchFromPoller(context.Background(), 0)
+	time.Sleep(200 * time.Millisecond)
+	fmt.Println("SURVIVED")
+}
+
+func TestSigwinchFromPoller_NonPositiveDurationDoesNotCrashProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSigwinchFromPollerNonPositiveDurationHelperProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "SPINQ_POLLER_NONPOS_DURATION_HELPER=1")
+	out, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("subprocess did not exit within the timeout, output:\n%s", out)
+	}
+	if err != nil {
+		t.Errorf("expected SigwinchFromPoller(ctx, 0) to not crash the process: %v\noutput:\n%s", err, out)
+		return
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("expected the process to survive and reach SURVIVED, output:\n%s", out)
+	}
 }
 
 func TestCachedGetWidth_InitialValueFromGetWidthUpfront(t *testing.T) {

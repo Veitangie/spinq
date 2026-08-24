@@ -37,6 +37,12 @@ func TestSpinqWriterPassthrough_AllLifecycleMethodsAreNoOps(t *testing.T) {
 	if sw.IsReal() {
 		t.Error("IsReal: expected false for a passthrough writer")
 	}
+	if sw.GetWidth() == nil {
+		t.Fatal("GetWidth: expected a non-nil func even for a passthrough writer")
+	}
+	if got := sw.GetWidth()(); got != -1 {
+		t.Errorf("GetWidth: expected a func reporting -1 for a passthrough writer, got %d", got)
+	}
 	sw.close()
 }
 
@@ -63,11 +69,43 @@ func TestSpinqWriterReal_IsReal(t *testing.T) {
 	}
 	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
 
-	if !pair.Standard.IsReal() {
+	if !asReal(t, pair.Standard).IsReal() {
 		t.Error("IsReal: expected true for a writer backed by a live spinner actor")
 	}
 	if !pair.Spinny.IsReal() {
 		t.Error("IsReal: expected true for a writer backed by a live spinner actor")
+	}
+}
+
+func TestSpinqWriterReal_GetWidth_DefaultsToNegativeOneWithoutResizeDetection(t *testing.T) {
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	if pair.Spinny.GetWidth() == nil {
+		t.Fatal("expected a non-nil func even when resize detection isn't configured")
+	}
+	if got := pair.Spinny.GetWidth()(); got != -1 {
+		t.Errorf("expected GetWidth()() to report -1 when resize detection isn't configured, got %d", got)
+	}
+}
+
+func TestSpinqWriterReal_GetWidth_ExposesTheConfiguredGetWidthOnBothWriters(t *testing.T) {
+	getWidth := func() int { return 55 }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(getWidth))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	if got := pair.Spinny.GetWidth()(); got != 55 {
+		t.Errorf("expected Spinny.GetWidth() to report the configured getWidth, got %d", got)
+	}
+	if got := asReal(t, pair.Standard).GetWidth()(); got != 55 {
+		t.Errorf("expected Standard's underlying writer to also carry the configured getWidth, got %d", got)
 	}
 }
 
@@ -78,13 +116,13 @@ func TestStart_Idempotent(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(ctx) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(ctx) })
 	if err != nil {
 		t.Fatalf("first start: %v", err)
 	}
-	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Standard.Stop() })
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(ctx) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(ctx) })
 	if err != nil {
 		t.Fatalf("second start should be a no-op, got error: %v", err)
 	}
@@ -164,11 +202,11 @@ func TestStart_ToleratesFrameFuncError(t *testing.T) {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("expected Start to tolerate a FrameFunc error, got %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Standard.Stop() })
+	callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
 }
 
 func TestStop_AfterStartWithAlwaysFailingFrameFuncDoesNotHang(t *testing.T) {
@@ -177,12 +215,12 @@ func TestStop_AfterStartWithAlwaysFailingFrameFuncDoesNotHang(t *testing.T) {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Standard.Stop() })
+	callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
 }
 
 func TestStart_DrawsInitialFrameImmediately(t *testing.T) {
@@ -272,7 +310,7 @@ func TestStop_WithoutStart(t *testing.T) {
 	}
 
 	var stopErr error
-	callWithTimeout(t, 2*time.Second, "Stop", func() { stopErr = pair.Standard.Stop() })
+	callWithTimeout(t, 2*time.Second, "Stop", func() { stopErr = pair.Spinny.Stop() })
 	if stopErr != nil {
 		t.Fatalf("expected nil error stopping an unstarted spinner, got %v", stopErr)
 	}
@@ -301,7 +339,7 @@ func TestStop_ClearsSpinner(t *testing.T) {
 		t.Fatalf("stop: %v", stopErr)
 	}
 
-	if got := spinny.String(); !strings.HasSuffix(got, string(clearBytes)) {
+	if got := spinny.String(); !strings.HasSuffix(got, string(ClearLineBytes)) {
 		t.Errorf("expected output to end with the clear sequence, got %q", got)
 	}
 }
@@ -424,7 +462,7 @@ func TestStopNoClear_RedrawsFreshFrameInPlaceOverOldOne(t *testing.T) {
 		t.Fatalf("stopNoClear: %v", stopErr)
 	}
 
-	if want := before + string(clearBytes) + "99%"; spinny.String() != want {
+	if want := before + string(ClearLineBytes) + "99%"; spinny.String() != want {
 		t.Errorf("expected the fresh frame to clear and replace the old one in place, got %q, want %q", spinny.String(), want)
 	}
 }
@@ -723,7 +761,7 @@ func TestSet_NilFrameFuncErrors(t *testing.T) {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Set", func() { err = pair.Standard.Set(nil) })
+	callWithTimeout(t, 2*time.Second, "Set", func() { err = pair.Spinny.Set(nil) })
 	if err == nil {
 		t.Error("expected error when setting a nil frame func")
 	}
@@ -767,7 +805,7 @@ func TestWrite_ClearsAndRedrawsSpinner(t *testing.T) {
 	}
 
 	got := spinny.String()
-	if !strings.Contains(got, string(clearBytes)) {
+	if !strings.Contains(got, string(ClearLineBytes)) {
 		t.Errorf("expected clear sequence on spinny stream, got %q", got)
 	}
 	if !strings.HasSuffix(got, "*") {
@@ -801,7 +839,7 @@ func TestWrite_NoRedrawWithoutTrailingNewline(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if got := spinny.String(); got != string(clearBytes) {
+	if got := spinny.String(); got != string(ClearLineBytes) {
 		t.Errorf("expected only the clear sequence (no redraw) after a write with no trailing newline, got %q", got)
 	}
 }
@@ -1056,7 +1094,7 @@ func TestStart_CtxCancellationStopsSpinner(t *testing.T) {
 
 	cancel()
 
-	waitForCondition(t, func() bool { return strings.HasSuffix(spinny.String(), string(clearBytes)) })
+	waitForCondition(t, func() bool { return strings.HasSuffix(spinny.String(), string(ClearLineBytes)) })
 }
 
 func TestFrameFunc_PanicHelperProcess(t *testing.T) {
@@ -1072,7 +1110,7 @@ func TestFrameFunc_PanicHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 
-	_ = pair.Standard.Start(context.Background())
+	_ = pair.Spinny.Start(context.Background())
 	fmt.Println("SURVIVED")
 }
 
@@ -1093,6 +1131,43 @@ func TestStart_PanickingFrameFuncDoesNotCrashProcess(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "SURVIVED") {
 		t.Errorf("expected the process to survive Start() and reach SURVIVED, output:\n%s", out)
+	}
+}
+
+func TestStartNilContextHelperProcess(t *testing.T) {
+	if os.Getenv("SPINQ_START_NIL_CTX_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper; see TestStart_NilContextDoesNotCrashProcess")
+	}
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "WrapPair:", err)
+		os.Exit(1)
+	}
+
+	_ = pair.Spinny.Start(nil) //nolint:staticcheck
+
+	time.Sleep(200 * time.Millisecond)
+	fmt.Println("SURVIVED")
+}
+
+func TestStart_NilContextDoesNotCrashProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStartNilContextHelperProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "SPINQ_START_NIL_CTX_HELPER=1")
+	out, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("subprocess did not exit within the timeout, output:\n%s", out)
+	}
+	if err != nil {
+		t.Errorf("expected Start(nil) to not crash the process: %v\noutput:\n%s", err, out)
+		return
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("expected the process to survive Start(nil) and reach SURVIVED, output:\n%s", out)
 	}
 }
 

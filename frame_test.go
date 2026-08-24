@@ -15,14 +15,14 @@ import (
 
 func TestSpinnerStatePresets(t *testing.T) {
 	presets := map[string][]string{
-		"DotsStates":      DotsStates,
-		"LineStates":      LineStates,
-		"ArrowStates":     ArrowStates,
-		"PipeStates":      PipeStates,
-		"FlyTroughStates": FlyTroughStates,
-		"BounceStates":    BounceStates,
-		"GrowingStates":   GrowingStates,
-		"BinaryStates":    BinaryStates,
+		"DotsStates":       DotsStates,
+		"LineStates":       LineStates,
+		"ArrowStates":      ArrowStates,
+		"PipeStates":       PipeStates,
+		"FlyThroughStates": FlyThroughStates,
+		"BounceStates":     BounceStates,
+		"GrowingStates":    GrowingStates,
+		"BinaryStates":     BinaryStates,
 	}
 
 	for name, states := range presets {
@@ -241,6 +241,37 @@ func TestDuration_CustomFormat(t *testing.T) {
 	}
 }
 
+func TestDuration_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
+	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := base
+	f := Duration(func() time.Time { return clock }, nil, DurationWithFormat(func(d time.Duration) string {
+		return fmt.Sprintf("elapsed=%dms", d.Milliseconds())
+	}), nil)
+
+	if _, err := f(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	clock = base.Add(150 * time.Millisecond)
+	got, err := f()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "elapsed=150ms" {
+		t.Errorf("expected a nil DurationOptionsFunc to be skipped and the real option after it still applied, got %q", got)
+	}
+}
+
+func TestDuration_NilFormatDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Duration(timer, DurationWithFormat(nil))() panicked: %v", r)
+		}
+	}()
+	f := Duration(time.Now, DurationWithFormat(nil))
+	_, _ = f()
+}
+
 func TestDuration_ConstructionToFirstCallGapDoesNotCount(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := base
@@ -276,9 +307,9 @@ func TestDuration_ExplicitStartAtSkipsConstructionTimeTimerCall(t *testing.T) {
 		return clock
 	}
 
-	f := Duration(timer, DurationStartAt(explicitStart))
+	f := Duration(timer, DurationWithStartAt(explicitStart))
 	if timerCalls != 0 {
-		t.Errorf("expected DurationStartAt to skip the construction-time timer() call, but timer was called %d time(s)", timerCalls)
+		t.Errorf("expected DurationWithStartAt to skip the construction-time timer() call, but timer was called %d time(s)", timerCalls)
 	}
 
 	got, err := f()
@@ -295,7 +326,7 @@ func TestDuration_NowBeforeStartAtReturnsEmptyFrame(t *testing.T) {
 	future := base.Add(1 * time.Hour)
 	clock := base
 
-	f := Duration(func() time.Time { return clock }, DurationStartAt(future))
+	f := Duration(func() time.Time { return clock }, DurationWithStartAt(future))
 
 	got, err := f()
 	if err != nil {
@@ -461,6 +492,34 @@ func TestRandom_IgnoresRandsBeyondFirst(t *testing.T) {
 	}
 }
 
+func TestRandom_NilRandDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Random(states, nil)() panicked: %v", r)
+		}
+	}()
+	f := Random([]string{"a", "b", "c"}, nil)
+	_, _ = f()
+}
+
+func TestRandom_SkipsLeadingNilsAndUsesFirstNonNil(t *testing.T) {
+	states := []string{"a", "b", "c", "d"}
+	real := rand.New(rand.NewPCG(9, 9))
+	f := Random(states, nil, real)
+	mirror := rand.New(rand.NewPCG(9, 9))
+
+	for i := range 10 {
+		got, err := f()
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		want := states[mirror.IntN(len(states))]
+		if string(got) != want {
+			t.Errorf("call %d: got %q, want %q — a leading nil should be skipped in favor of the first non-nil *rand.Rand", i, got, want)
+		}
+	}
+}
+
 func TestRandom_FallsBackToPackageLevelRandWhenNoneProvided(t *testing.T) {
 	states := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
 	f := Random(states)
@@ -501,6 +560,46 @@ func TestRandomOnceEvery_NonPositiveModReturnsNoop(t *testing.T) {
 			t.Errorf("mod=%d: expected an empty frame, got %q", mod, got)
 		}
 	}
+}
+
+func TestRandomOnceEvery_NilRandDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("RandomOnceEvery(states, mod, nil) panicked: %v", r)
+		}
+	}()
+	_ = RandomOnceEvery([]string{"a", "b", "c"}, 3, nil)
+}
+
+func TestRandomOnceEvery_SkipsLeadingNilsAndUsesFirstNonNil(t *testing.T) {
+	const mod = 3
+	states := []string{"a", "b", "c", "d", "e"}
+	newFn := func(rands ...*rand.Rand) FrameFunc {
+		return RandomOnceEvery(states, mod, rands...)
+	}
+	f1 := newFn(nil, rand.New(rand.NewPCG(123, 456)))
+	f2 := newFn(rand.New(rand.NewPCG(123, 456)))
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("RandomOnceEvery(states, mod, nil, real)() panicked on redraw: %v", r)
+			}
+		}()
+		for i := range 20 {
+			g1, err := f1()
+			if err != nil {
+				t.Fatalf("call %d: unexpected error: %v", i, err)
+			}
+			g2, err := f2()
+			if err != nil {
+				t.Fatalf("call %d: unexpected error: %v", i, err)
+			}
+			if string(g1) != string(g2) {
+				t.Fatalf("call %d: leading nil changed the draw sequence: %q vs %q — it should be skipped in favor of the first non-nil *rand.Rand", i, g1, g2)
+			}
+		}
+	}()
 }
 
 func TestRandomOnceEvery_SingleStateReturnsStatic(t *testing.T) {
@@ -639,6 +738,44 @@ func TestSurrounded_PropagatesDelegateError(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected no bytes on error, got %q", got)
+	}
+}
+
+func TestDynamic_NilGetWidthFallsBackToNoop(t *testing.T) {
+	var got []byte
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Dynamic(nil, build)() panicked: %v", r)
+			}
+		}()
+		got, err = Dynamic(nil, func(width int) FrameFunc { return Static("x") })()
+	}()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected a nil getWidth to fall back to Noop, got %q", got)
+	}
+}
+
+func TestDynamic_NilBuildFallsBackToNoop(t *testing.T) {
+	var got []byte
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("Dynamic(getWidth, nil)() panicked: %v", r)
+			}
+		}()
+		got, err = Dynamic(func() int { return 40 }, nil)()
+	}()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected a nil build to fall back to Noop, got %q", got)
 	}
 }
 

@@ -9,12 +9,11 @@ import (
 
 	"github.com/clipperhouse/displaywidth"
 	"github.com/clipperhouse/uax29/v2/graphemes"
-	"veitangie.dev/spinq/internal/stripansi"
 )
 
 const lineUp = "\033[A"
 
-var clearPrevLine = append([]byte(lineUp), clearBytes...)
+var clearPrevLine = append([]byte(lineUp), ClearLineBytes...)
 
 type clearerDrawer interface {
 	clear(*spinnerState) error
@@ -30,7 +29,7 @@ var _ clearerDrawer = obliviousClearerDrawer{}
 func (obliviousClearerDrawer) clear(st *spinnerState) error {
 	if st.needClear {
 		st.needClear = false
-		_, err := st.wrapped.Write(clearBytes)
+		_, err := st.wrapped.Write(ClearLineBytes)
 		return err
 	}
 	return nil
@@ -65,7 +64,7 @@ func (a *awareClearerDrawer) clear(st *spinnerState) error {
 
 	if st.needClear {
 		st.needClear = false
-		_, err := st.wrapped.Write(clearBytes)
+		_, err := st.wrapped.Write(ClearLineBytes)
 		return err
 	}
 	return nil
@@ -103,15 +102,15 @@ func (a *awareClearerDrawer) handleResize(st *spinnerState) error {
 
 // NOT THREAD SAFE
 func (a *awareClearerDrawer) clearMess(st *spinnerState) error {
-	if !st.needClear || a.width == 0 {
+	if !st.needClear || a.width <= 0 {
 		return nil
 	}
 
-	linesToClear := max((displaywidth.Bytes(stripansi.StripBytes(a.visible))+a.width-1)/a.width, 1)
+	linesToClear := max((displaywidth.Bytes(StripANSIBytes(a.visible))+a.width-1)/a.width, 1)
 	totalSeq := bytes.Buffer{}
 	for curLine := range linesToClear {
 		if curLine == 0 {
-			_, _ = totalSeq.Write(clearBytes)
+			_, _ = totalSeq.Write(ClearLineBytes)
 		} else {
 			_, _ = totalSeq.Write(clearPrevLine)
 		}
@@ -123,7 +122,7 @@ func (a *awareClearerDrawer) clearMess(st *spinnerState) error {
 
 // NOT THREAD SAFE
 func (a *awareClearerDrawer) adjust(st *spinnerState) {
-	if a.width >= len(st.frame) || a.width >= displaywidth.Bytes(stripansi.StripBytes(st.frame)) {
+	if a.width >= len(st.frame) || a.width >= displaywidth.Bytes(StripANSIBytes(st.frame)) {
 		a.visible = st.frame
 		return
 	}

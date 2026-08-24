@@ -24,11 +24,11 @@ func TestConcurrentWrites(t *testing.T) {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Standard.Stop() })
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
 
 	const goroutines = 20
 	const writesEach = 50
@@ -159,12 +159,12 @@ func TestConcurrentStartStop(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Standard.Start(ctx) }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinny.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Standard.Stop() }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinny.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
@@ -194,12 +194,12 @@ func TestConcurrentStartStopWithWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 30 {
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Standard.Start(ctx) }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinny.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Standard.Stop() }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinny.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})

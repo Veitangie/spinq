@@ -1,0 +1,89 @@
+name: Mutation Testing Badge
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gremlins:
+    name: Update test efficacy badge
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout spinq source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          path: spinq
+
+      - name: Checkout badge repo
+        uses: actions/checkout@v6
+        with:
+          repository: Veitangie/assets
+          token: ${{ secrets.ASSETS_REPO_TOKEN }}
+          path: assets
+
+      - name: Check for Go changes since the last badge update
+        id: check
+        run: |
+          marker="assets/badges/spinq/last-commit.txt"
+          if [ -f "$marker" ]; then
+            last="$(cat "$marker")"
+            changed="$(git -C spinq diff --name-only "$last" HEAD -- '*.go')"
+            if [ -z "$changed" ]; then
+              echo "No .go changes since $last - skipping this week's run."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Setup Go
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'spinq/go.mod'
+          cache: true
+          cache-dependency-path: spinq/go.sum
+
+      - name: Install gremlins
+        if: steps.check.outputs.skip != 'true'
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+
+      - name: Run mutation testing
+        if: steps.check.outputs.skip != 'true'
+        working-directory: spinq
+        run: gremlins unleash --workers 2 --timeout-coefficient 8 -o ../gremlins-report.json -E '.*/examples/.*' -E '.*/local/.*' .
+
+      - name: Generate badge JSON
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          mkdir -p assets/badges/spinq
+          # floor, not round - that's the house convention for this metric
+          efficacy="$(jq '.test_efficacy | floor' gremlins-report.json)"
+          message="${efficacy}%"
+          color="red"
+          if [ "$efficacy" -ge 90 ]; then
+            color="brightgreen"
+          elif [ "$efficacy" -ge 75 ]; then
+            color="yellow"
+          fi
+          jq -n --arg label "test efficacy" --arg message "$message" --arg color "$color" \
+            '{schemaVersion: 1, label: $label, message: $message, color: $color}' \
+            > assets/badges/spinq/gremlins.json
+          git -C spinq rev-parse HEAD > assets/badges/spinq/last-commit.txt
+
+      - name: Commit and push badge update
+        if: steps.check.outputs.skip != 'true'
+        working-directory: assets
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add badges/spinq/gremlins.json badges/spinq/last-commit.txt
+          if git diff --cached --quiet; then
+            echo "Badge unchanged, nothing to commit."
+          else
+            git commit -m "chore(spinq): update test efficacy badge"
+            git push
+          fi

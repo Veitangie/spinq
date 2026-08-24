@@ -52,6 +52,18 @@ func TestWrapPair_Errors(t *testing.T) {
 	})
 }
 
+func TestWrapPair_NilContextDoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("WrapPair(nil, ...) panicked: %v", r)
+		}
+	}()
+	pair, err := WrapPair(nil, &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time)) //nolint:staticcheck
+	if err == nil && pair != nil {
+		pair.Close()
+	}
+}
+
 func TestWrapPair_SharesState(t *testing.T) {
 	main := &syncBuffer{}
 	spinny := &syncBuffer{}
@@ -126,6 +138,20 @@ func TestWrapPair_ResizeDetectionOption_UsesAwareClearerDrawer(t *testing.T) {
 
 	if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
 		t.Errorf("expected an *awareClearerDrawer when GetWidth is set, got %T", asReal(t, pair.Spinny).st.cd)
+	}
+}
+
+func TestWrapPair_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
+	getWidth := func() int { return 42 }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time), nil, WrapWithResizeDetection(getWidth), nil)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+
+	if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
+		t.Errorf("expected a nil WrapOptionsFunc to be skipped and the real option after it still applied, got %T", asReal(t, pair.Spinny).st.cd)
 	}
 }
 
@@ -267,6 +293,31 @@ func TestWrapFilePair_SpinnyNotTerminalDisablesBoth(t *testing.T) {
 	}
 }
 
+func TestWrapFilePair_SpinnyNotTerminal_GetWidthReportsNothingToDetect(t *testing.T) {
+	main, err := os.CreateTemp(t.TempDir(), "main")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer func() { _ = main.Close() }()
+
+	spinny, err := os.CreateTemp(t.TempDir(), "spinny")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer func() { _ = spinny.Close() }()
+
+	getWidth := func() int { return 123 }
+	pair, err := WrapFilePair(context.Background(), main, spinny, staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(getWidth))
+	if err != nil {
+		t.Fatalf("WrapFilePair: %v", err)
+	}
+
+	if got := pair.Spinny.GetWidth()(); got != -1 {
+		t.Errorf("expected pair.Spinny.GetWidth() to report -1 (nothing to detect) once the Pair fell back "+
+			"to a passthrough, regardless of what was configured, got %d instead", got)
+	}
+}
+
 func TestWrapFilePair_MainNotTerminalDisablesOnlyStandard(t *testing.T) {
 	spinnyTTY := openTestPTY(t)
 
@@ -338,6 +389,20 @@ func TestWrapOS_CIEnvDisablesSpinner(t *testing.T) {
 	}
 }
 
+func TestWrapOS_CIEnv_GetWidthReportsNothingToDetect(t *testing.T) {
+	t.Setenv("CI", "1")
+
+	getWidth := func() int { return 123 }
+	pair, err := WrapOS(context.Background(), staticFrame([]byte("*")), make(chan time.Time), WrapWithResizeDetection(getWidth))
+	if err != nil {
+		t.Fatalf("WrapOS: %v", err)
+	}
+
+	if got := pair.Spinny.GetWidth()(); got != -1 {
+		t.Errorf("expected pair.Spinny.GetWidth() to report -1 (nothing to detect) under CI, got %d instead", got)
+	}
+}
+
 func TestClose_ClearsDisplay(t *testing.T) {
 	spinny := &syncBuffer{}
 	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, staticFrame([]byte("*")), make(chan time.Time))
@@ -352,7 +417,7 @@ func TestClose_ClearsDisplay(t *testing.T) {
 
 	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
 
-	if got := spinny.String(); !strings.HasSuffix(got, string(clearBytes)) {
+	if got := spinny.String(); !strings.HasSuffix(got, string(ClearLineBytes)) {
 		t.Errorf("expected Close to clear the display, got %q", got)
 	}
 }
@@ -365,17 +430,17 @@ func TestClose_SubsequentCallsReturnErrClosed(t *testing.T) {
 
 	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Standard.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
 	if !errors.Is(err, ErrClosed) {
 		t.Errorf("expected Start after Close to return ErrClosed, got %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Stop", func() { err = pair.Standard.Stop() })
+	callWithTimeout(t, 2*time.Second, "Stop", func() { err = pair.Spinny.Stop() })
 	if !errors.Is(err, ErrClosed) {
 		t.Errorf("expected Stop after Close to return ErrClosed, got %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Set", func() { err = pair.Standard.Set(staticFrame([]byte("x"))) })
+	callWithTimeout(t, 2*time.Second, "Set", func() { err = pair.Spinny.Set(staticFrame([]byte("x"))) })
 	if !errors.Is(err, ErrClosed) {
 		t.Errorf("expected Set after Close to return ErrClosed, got %v", err)
 	}

@@ -149,16 +149,15 @@ func SigwinchFromPoller(ctx context.Context, d time.Duration) <-chan struct{} {
 }
 
 // DefaultResizeDetection is WithDefaultResizeDetection, but also returns
-// the getWidth it wired up so it can be reused elsewhere - e.g. shaped with
-// Offset/Portion/Clamp to size a DynamicBarRender/Dynamic FrameFunc built
-// for the same JustStart call, or fetched later via SpinqWriter.GetWidth.
+// the getWidth it wired up, for reuse elsewhere - e.g. shaped with
+// Offset/Portion/Clamp to size a DynamicBarRender/Dynamic FrameFunc for the
+// same JustStart call, or fetched later via Writer.GetWidth.
+//
 // On failure (usually os.Stderr not being a real terminal), both return
-// values stay safe to use unconditionally: the JustStartOptionsFunc falls
-// back to the same no-op WithDefaultResizeDetection's own failure path
-// uses, and getWidth reports -1 (nothing to detect), the same value
-// GetWidth() reports for any writer with no resize detection to draw
-// against. The error is still returned so the caller can tell success from
-// failure if they care to.
+// values stay safe to use unconditionally: the JustStartOptionsFunc is a
+// no-op, and getWidth always reports -1 (the same "nothing to detect" value
+// GetWidth() reports). The error is still returned so the caller can tell
+// success from failure if they care to.
 func DefaultResizeDetection(ctx context.Context) (JustStartOptionsFunc, func() int, error) {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {

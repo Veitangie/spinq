@@ -33,7 +33,7 @@ func ExampleJustStart() {
 	if err != nil {
 		panic(err)
 	}
-	defer pair.Close()
+	defer pair.Spinner.Close() //nolint:errcheck
 
 	for i := range 5 {
 		time.Sleep(400 * time.Millisecond)
@@ -45,12 +45,12 @@ func ExampleJustStart_withOptions() {
 	pair, err := spinq.JustStart(
 		spinq.WithText("Uploading"),
 		spinq.WithStates(spinq.ArrowStates),
-		spinq.WithDuration(50*time.Millisecond),
+		spinq.WithEvery(50*time.Millisecond),
 	)
 	if err != nil {
 		panic(err)
 	}
-	defer pair.Close()
+	defer pair.Spinner.Close() //nolint:errcheck
 }
 
 func ExampleProgress() {
@@ -66,7 +66,7 @@ func ExampleProgress() {
 	if err != nil {
 		panic(err)
 	}
-	defer pair.Close()
+	defer pair.Spinner.Close() //nolint:errcheck
 }
 
 func ExampleWrapOS() {
@@ -81,9 +81,9 @@ func ExampleWrapOS() {
 	if err != nil {
 		panic(err)
 	}
-	defer pair.Close()
+	defer pair.Spinner.Close() //nolint:errcheck
 
-	if err := pair.Spinny.Start(ctx); err != nil {
+	if err := pair.Spinner.Start(ctx); err != nil {
 		panic(err)
 	}
 }

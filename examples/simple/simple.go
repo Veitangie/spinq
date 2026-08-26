@@ -15,8 +15,8 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
-	stdout, stderr := p.Standard, p.Spinny
+	defer p.Spinner.Close()
+	stdout, stderr := p.Standard, p.Spinner
 	defer stderr.StopWith("All done!\n")
 	fmt.Fprintln(stdout, "Going to sleep for 3 seconds")
 	go func() {

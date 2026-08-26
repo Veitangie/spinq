@@ -107,11 +107,14 @@ func staticFrame(b []byte) FrameFunc {
 	}
 }
 
-func asReal(t *testing.T, w io.Writer) SpinqWriterReal {
+func asReal(t *testing.T, w io.Writer) writerReal {
 	t.Helper()
-	real, ok := w.(SpinqWriterReal)
+	if std, ok := w.(stdWriter); ok {
+		return std.underlying
+	}
+	real, ok := w.(writerReal)
 	if !ok {
-		t.Fatalf("expected SpinqWriterReal, got %T", w)
+		t.Fatalf("expected writerReal (bare, or wrapped in stdWriter), got %T", w)
 	}
 	return real
 }

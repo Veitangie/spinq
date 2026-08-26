@@ -33,8 +33,8 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
-	stdout, stderr := p.Standard, p.Spinny
+	defer p.Spinner.Close()
+	stdout, stderr := p.Standard, p.Spinner
 	defer stderr.StopWith("All done!\n")
 	fmt.Fprintln(stdout, "Going to sleep for 3 seconds")
 	go func() {
@@ -80,9 +80,9 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
+	defer p.Spinner.Close()
 
-	stdout, stderr := p.Standard, p.Spinny
+	stdout, stderr := p.Standard, p.Spinner
 	stderr.Start(context.Background())
 
 	latch := &sync.WaitGroup{}
@@ -104,7 +104,7 @@ func main() {
 
 	latch.Done()
 	wg.Wait()
-	p.Spinny.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetStyle + " Done\n")
+	stderr.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetStyle + " Done\n")
 }
 ```
 
@@ -157,10 +157,10 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
+	defer p.Spinner.Close()
 
 	fmt.Fprintf(p.Standard, "%d cols wide, bar gets %d\n", getWidth(), barWidth())
-	if err := p.Spinny.Start(ctx); err != nil {
+	if err := p.Spinner.Start(ctx); err != nil {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
@@ -176,7 +176,7 @@ func main() {
 	}
 	wg.Wait()
 
-	p.Spinny.StopNoClear(" " + spinq.Green + "done" + spinq.ResetStyle + "\n")
+	p.Spinner.StopNoClear(" " + spinq.Green + "done" + spinq.ResetStyle + "\n")
 }
 ```
 
@@ -190,7 +190,7 @@ Every existing Go spinner library I looked at made me choose between "too heavy"
 
 - **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq ships five direct dependencies, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) and [`uax29`](https://github.com/clipperhouse/uax29) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. Everything else is standard library.
 
-- **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinny` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
+- **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinner` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
 
 If none of that matters for your use case, you probably don't need spinq - plenty of other great options exist. If it does, spinq was made to solve exactly these problems.
 
@@ -218,7 +218,7 @@ spinq is scoped deliberately narrow - see above. That's not the right shape for 
 
 - **[cheggaaa/pb](https://github.com/cheggaaa/pb)** - similar multi-bar territory (it calls this a pool), plus built-in `io.Reader`/`io.Writer` wrapping so a bar tracks bytes read or written from a stream without you wiring up a counter yourself, and byte-unit formatting (KiB/MiB/...) out of the box.
 
-- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~5x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
+- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~4x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
 
 - **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
 
@@ -235,14 +235,14 @@ Same methodology as the footnote above (stripped-binary delta over an empty Go p
 
 | library | version | scope | delta | vs. spinq |
 |---|---|---|---:|---:|
-| [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.59x |
-| **spinq** | **unreleased, past v1.0.0-rc.9** | spinner + bar + resize-aware + grapheme-correct | **640 KB** | **1.00x** |
-| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.32x |
-| [mpb](https://github.com/vbauerster/mpb) | v8.16.0 | dedicated multi-progress-bar library | 1020 KB | 1.59x |
-| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1468 KB | 2.29x |
-| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1952 KB | 3.05x |
-| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2236 KB | 3.49x |
-| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.69x |
+| [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.51x |
+| **spinq** | **v1.0.0-rc.10** | spinner + bar + resize-aware + grapheme-correct | **732 KB** | **1.00x** |
+| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.15x |
+| [mpb](https://github.com/vbauerster/mpb) | v8.16.0 | dedicated multi-progress-bar library | 1020 KB | 1.39x |
+| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1468 KB | 2.01x |
+| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1952 KB | 2.67x |
+| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2236 KB | 3.05x |
+| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.10x |
 
 Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured August 2026, same Go toolchain (go1.27.0) throughout.
 
@@ -281,7 +281,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer pair.Close()
+	defer pair.Spinner.Close()
 
 	for i := range 5 {
 		time.Sleep(400 * time.Millisecond)
@@ -302,7 +302,7 @@ yourself:
 pair, err := spinq.JustStart(
 	spinq.WithText("Uploading"),
 	spinq.WithStates(spinq.ArrowStates),
-	spinq.WithDuration(50 * time.Millisecond),
+	spinq.WithEvery(50 * time.Millisecond),
 )
 ```
 
@@ -321,10 +321,10 @@ pair, err := spinq.JustStart(spinq.WithFrame(getFrame))
 if err != nil {
 	panic(err)
 }
-defer pair.Close()
+defer pair.Spinner.Close()
 ```
 
-`BarRender`/`SmoothBarRender` (sub-cell precision, for smoother fill) both ship a handful of presets (`WithRoundedBarOptions`, `WithShadeBarOptions`, `WithDotBarOptions`, `WithMinimalBarOptions`, `WithThinBarOptions`), or take functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own.
+`BarRender` ships a handful of presets (`WithRoundedBarOptions`, `WithShadeBarOptions`, `WithDotBarOptions`, `WithMinimalBarOptions`, `WithThinBarOptions`), or takes functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own. `SmoothBarRender` (sub-cell precision, for smoother fill) has its own preset set instead (`WithSnakeSmoothOptions`, `WithBrailleSmoothOptions`, `WithPieSmoothOptions`, `WithDotSmoothOptions`, `WithShadeSmoothOptions`), plus the matching `SmoothWith*` functional options.
 
 ## Composing frames
 
@@ -344,9 +344,9 @@ frame := spinq.Join("",
 
 `JustStart` wraps `WrapOS`, which wraps `WrapFilePair`, which wraps `WrapPair` - each layer adds one piece of default behavior, and each is exported if you need less of it:
 
-- `WrapPair(ctx, main, spinny, getFrame, ticker, opts...)`: the primitive. Takes any two `io.Writer`s, no TTY detection at all.
+- `WrapPair(ctx, main, spinner, getFrame, ticker, opts...)`: the primitive. Takes any two `io.Writer`s, no TTY detection at all.
 
-- `WrapFilePair(ctx, main, spinny *os.File, ..., opts...)`: adds the character-device check, falling back to a passthrough for non-terminal files.
+- `WrapFilePair(ctx, main, spinner *os.File, ..., opts...)`: adds the character-device check, falling back to a passthrough for non-terminal files.
 
 - `WrapOS(ctx, getFrame, ticker, opts...)`: `WrapFilePair` applied to `os.Stdout`/`os.Stderr`, plus a `CI` environment variable check.
 
@@ -367,14 +367,14 @@ If `getFrame` itself also needs that same `getWidth` - to size a `DynamicBarRend
 
 ## Staying resilient across write errors
 
-A write failure (a resized/flaky terminal, a closed pipe) auto-stops the spinner - `Stop`/`StopWith`/`StopNoClear` become no-ops until `Start` is called again. A long-running program that wants to keep drawing across that should range over `pair.Err()` in the background and call `Start` again on each delivery:
+A write failure (a resized/flaky terminal, a closed pipe) auto-stops the spinner - `Stop`/`StopWith`/`StopNoClear` become no-ops until `Start` is called again. `pair.Spinner.Err()` also delivers a `Panic` whenever a `FrameFunc` call panics, but that case is different: the panic is recovered, that one frame is just skipped, and the spinner is never stopped by it. A long-running program that wants to keep drawing across a write failure should range over `pair.Spinner.Err()` in the background and call `Start` again on each delivery - harmless to do for a `Panic` delivery too, since `Start` on an already-running spinner is a no-op:
 
 ```go
 go func() {
-	for range pair.Err() {
-		err := pair.Spinny.Start(ctx)
+	for range pair.Spinner.Err() {
+		err := pair.Spinner.Start(ctx)
 		if errors.Is(err, spinq.ErrClosed) {
-			return // the Pair itself was closed - stop retrying
+			return // the Writer itself was closed - stop retrying
 		}
 		// any other error just means this one restart attempt failed;
 		// keep waiting for the next delivery
@@ -384,7 +384,11 @@ go func() {
 
 ## Design
 
-A single background goroutine (an actor) owns all spinner state and is the only thing that ever touches it. Every public method talks to it over a channel. A tick-triggered fetch runs in its own goroutine, so a slow `FrameFunc` never blocks the actor from handling other calls - but the actor tracks that fetch and waits for it to finish before ever calling `FrameFunc` again, so the "never called concurrently with itself" guarantee still holds. A panic inside `FrameFunc` is recovered, reported on `Err()`, and never crashes the process. See [pkg.go.dev](https://pkg.go.dev/veitangie.dev/spinq) for the full API reference.
+spinq is actor-based: a single goroutine owns all spinner state, and every public method talks to it over a channel. The one exception worth knowing: `Start`'s initial frame, `StopNoClear`'s final frame, and a running `Set`'s redraw all fetch synchronously inside the actor, so a slow `FrameFunc` there blocks that call, any other `Start`/`Stop*`/`Set`/`Close` made concurrently on the same `Writer`, and `Close` itself - a plain `Write` is unaffected. A panic inside `FrameFunc` is recovered, reported on `Err()` as a `Panic`, and never crashes the process or stops the spinner.
+
+`Close` joins the actor's own goroutine, but not every short-lived goroutine spinq spawns along the way (a per-`Start` context watcher, the tail of a tick-triggered fetch) - those are cancelled, not joined, so nothing guarantees they've exited yet, though none do user-visible work by that point.
+
+See [pkg.go.dev](https://pkg.go.dev/veitangie.dev/spinq) for the full API reference.
 
 ## License
 

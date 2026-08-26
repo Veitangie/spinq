@@ -38,10 +38,10 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
+	defer p.Spinner.Close()
 
 	fmt.Fprintf(p.Standard, "%d cols wide, bar gets %d\n", getWidth(), barWidth())
-	if err := p.Spinny.Start(ctx); err != nil {
+	if err := p.Spinner.Start(ctx); err != nil {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
@@ -57,5 +57,5 @@ func main() {
 	}
 	wg.Wait()
 
-	p.Spinny.StopNoClear(" " + spinq.Green + "done" + spinq.ResetStyle + "\n")
+	p.Spinner.StopNoClear(" " + spinq.Green + "done" + spinq.ResetStyle + "\n")
 }

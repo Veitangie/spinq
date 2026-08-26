@@ -17,55 +17,26 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
-// SpinqPair bundles two writers sharing one spinner: Standard - an io.Writer
+// Pair bundles two writers sharing one spinner: Standard - a plain io.Writer
 // for the program's normal output (which the spinner clears out of the way
-// and redraws around), and Spinny - a SpinqWriter for the animated frame
-// itself, plus lifecycle control (Start/Stop/Set). Standard and Spinny may
-// be the same underlying stream, or fall back to one another, depending on
-// how the pair was constructed - see WrapPair, WrapFilePair, WrapOS, and
-// JustStart.
-type SpinqPair struct {
-	// Standard is a plain io.Writer, not SpinqWriter: even when the
-	// concrete value behind it happens to implement SpinqWriter, driving
-	// lifecycle methods (Start/Stop/Set) through it isn't guaranteed to
-	// behave consistently with Spinny. Type-asserting it back to
-	// SpinqWriter for those methods is unsupported - use Spinny.
+// and redraws around), and Spinner - a Writer for the animated frame
+// itself, plus lifecycle control and error reporting (Start/Stop/Set/
+// Close/Err). Standard and Spinner may be the same underlying stream, or
+// fall back to one another, depending on how the pair was constructed -
+// see WrapPair, WrapFilePair, WrapOS, and JustStart.
+type Pair struct {
+	// Standard is deliberately just an io.Writer - its concrete value
+	// never implements Writer's lifecycle methods (Start/Stop/Set/
+	// Close/Err/...), even though it shares the same spinner actor as
+	// Spinner. Use Spinner for lifecycle control.
 	Standard io.Writer
-	Spinny   SpinqWriter
-	err      <-chan error
+	Spinner  Writer
 }
 
-// Close stops the spinner, clears its display, and shuts down the
-// background actor, waiting for it to fully exit before returning. Every
-// lifecycle management method on Spinny called after Close returns
-// ErrClosed, but Write (on either Standard or Spinny) does not get
-// affected.
-func (sp SpinqPair) Close() {
-	sp.Spinny.close()
-}
-
-// Err returns a channel of errors from failures spinq can't otherwise
-// report synchronously - specifically, a write failure during a
-// ticker-triggered redraw, or during the final clear on Close. Deliveries
-// are best-effort: if nothing is reading from the channel when an error
-// occurs, spinq waits briefly before giving up rather than blocking on a
-// reader that may never come. The channel is closed once the Pair is
-// fully shut down.
-//
-// A write failure auto-stops the spinner (Stop/StopWith/StopNoClear
-// become no-ops until Start is called again). See the README for the
-// restart-on-error pattern for long-running callers.
-func (sp SpinqPair) Err() <-chan error {
-	return sp.err
-}
-
-func passthroughPair(main, spinny io.Writer) *SpinqPair {
-	errCh := make(chan error)
-	close(errCh)
-	return &SpinqPair{
-		Standard: SpinqWriterPassthrough{main},
-		Spinny:   SpinqWriterPassthrough{spinny},
-		err:      errCh,
+func passthroughPair(main, spinner io.Writer) *Pair {
+	return &Pair{
+		Standard: WriterPassthrough{main},
+		Spinner:  WriterPassthrough{spinner},
 	}
 }
 
@@ -104,9 +75,9 @@ func WrapWithResizeDetection(getWidth func() int) WrapOptionsFunc {
 	}
 }
 
-// WrapPair wraps main and spinny in a *SpinqPair backed by a real,
-// running spinner actor - this is the primitive every other Wrap*/JustStart
-// entry point builds on. ctx governs the whole Pair's lifetime: cancelling
+// WrapPair wraps main and spinner in a *Pair backed by a live spinner
+// actor - this is the primitive every other Wrap*/JustStart entry point
+// builds on. ctx governs the whole Pair's lifetime: cancelling
 // it (or calling Close) stops the actor and makes every subsequent call
 // return ErrClosed; a nil ctx defaults to context.Background(). getFrame
 // supplies frames on demand and is called by the actor on its own
@@ -114,10 +85,10 @@ func WrapWithResizeDetection(getWidth func() int) WrapOptionsFunc {
 // ticker drives periodic redraws; see Every for a simple wall-clock
 // source, or supply your own channel (e.g. for tests).
 //
-// If main or spinny is nil, the other is used for both. It is an error for
+// If main or spinner is nil, the other is used for both. It is an error for
 // both to be nil, for getFrame to be nil, or for ticker to be nil.
-func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*SpinqPair, error) {
-	if main == nil && spinny == nil {
+func WrapPair(ctx context.Context, main, spinner io.Writer, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
+	if main == nil && spinner == nil {
 		return nil, errors.New("both writers are nil")
 	}
 	if getFrame == nil {
@@ -128,10 +99,10 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 	}
 
 	if main == nil {
-		main = spinny
+		main = spinner
 	}
-	if spinny == nil {
-		spinny = main
+	if spinner == nil {
+		spinner = main
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -160,7 +131,7 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 	errCh := make(chan error, 1)
 	st := &spinnerState{
 		writerMut: &sync.Mutex{},
-		wrapped:   spinny,
+		wrapped:   spinner,
 		wg:        &sync.WaitGroup{},
 		cd:        cd,
 		errCh:     errCh,
@@ -175,22 +146,25 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 	}
 	st.startBackground()
 
-	return &SpinqPair{
-		Standard: SpinqWriterReal{
-			st:       st,
-			wrapped:  main,
-			getWidth: getWidth,
+	return &Pair{
+		Standard: stdWriter{
+			writerReal{
+				st:       st,
+				wrapped:  main,
+				getWidth: getWidth,
+				errCh:    errCh,
+			},
 		},
-		Spinny: SpinqWriterReal{
+		Spinner: writerReal{
 			st:       st,
-			wrapped:  spinny,
+			wrapped:  spinner,
 			getWidth: getWidth,
+			errCh:    errCh,
 		},
-		err: errCh,
 	}, nil
 }
 
-// WrapFilePair is WrapPair for *os.File streams: it checks whether spinny
+// WrapFilePair is WrapPair for *os.File streams: it checks whether spinner
 // (and, if that's a terminal, main too) is actually a terminal via isatty,
 // falling back to a plain passthrough - no actor, no mutex, Start/Stop/Set
 // become no-ops - for either stream that isn't. Safe to call
@@ -198,15 +172,15 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 // streams are wrapped via go-colorable for correct ANSI rendering on
 // legacy Windows terminals. WrapOS is this function applied to
 // os.Stdout/os.Stderr.
-func WrapFilePair(ctx context.Context, main, spinny *os.File, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*SpinqPair, error) {
-	if main == nil && spinny == nil {
+func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
+	if main == nil && spinner == nil {
 		return nil, errors.New("both files are nil")
 	}
 	if main == nil {
-		main = spinny
+		main = spinner
 	}
-	if spinny == nil {
-		spinny = main
+	if spinner == nil {
+		spinner = main
 	}
 
 	if getFrame == nil {
@@ -217,21 +191,21 @@ func WrapFilePair(ctx context.Context, main, spinny *os.File, getFrame FrameFunc
 		return nil, errors.New("ticker for spinner is nil")
 	}
 
-	colorableMain, colorableSpinny := colorable.NewColorable(main), colorable.NewColorable(spinny)
+	colorableMain, colorableSpinner := colorable.NewColorable(main), colorable.NewColorable(spinner)
 
-	inTermErr := isatty.IsTerminal(spinny.Fd()) || isatty.IsCygwinTerminal(spinny.Fd())
+	inTermErr := isatty.IsTerminal(spinner.Fd()) || isatty.IsCygwinTerminal(spinner.Fd())
 	if !inTermErr {
-		return passthroughPair(colorableMain, colorableSpinny), nil
+		return passthroughPair(colorableMain, colorableSpinner), nil
 	}
 
 	inTermOut := isatty.IsTerminal(main.Fd()) || isatty.IsCygwinTerminal(main.Fd())
-	res, err := WrapPair(ctx, colorableMain, colorableSpinny, getFrame, ticker, opts...)
+	res, err := WrapPair(ctx, colorableMain, colorableSpinner, getFrame, ticker, opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	if !inTermOut {
-		res.Standard = SpinqWriterPassthrough{colorableMain}
+		res.Standard = WriterPassthrough{colorableMain}
 	}
 	return res, nil
 }
@@ -242,7 +216,7 @@ func WrapFilePair(ctx context.Context, main, spinny *os.File, getFrame FrameFunc
 // under a CI environment variable, without even touching os.Stdout/Stderr,
 // so it's safe to call from any CI runner regardless of how that runner's
 // own TTY detection behaves. This is the entry point JustStart itself uses.
-func WrapOS(ctx context.Context, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*SpinqPair, error) {
+func WrapOS(ctx context.Context, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
 	if getFrame == nil {
 		return nil, errors.New("frame function is nil")
 	}

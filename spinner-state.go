@@ -15,8 +15,8 @@ import (
 	"time"
 )
 
-// ErrClosed is returned by any SpinqWriter method called after the Pair has
-// been Closed (or its governing context cancelled).
+// ErrClosed is returned by any Writer lifecycle method (via Pair.Spinner)
+// called after Close (or its governing context cancellation).
 var ErrClosed error = errors.New("spinner closed")
 
 // ErrAlreadyRunning signals a redundant Start call while already running.
@@ -25,7 +25,9 @@ var ErrAlreadyRunning error = errors.New("spinner already running")
 
 // Panic is the error reported on Err() when a FrameFunc call panics - the
 // actor recovers it, so a panic never crashes the process or propagates to
-// a caller. See Value for the original recovered value.
+// a caller, and (unlike a write failure) never stops the spinner either;
+// that one frame is just skipped. See Value for the original recovered
+// value.
 type Panic struct {
 	underlying any
 }

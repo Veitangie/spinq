@@ -145,15 +145,15 @@ func TestWithTicker_NilIsANoOp(t *testing.T) {
 	}
 }
 
-func TestWithDuration_SetsATickingTicker(t *testing.T) {
-	opt := WithDuration(10 * time.Millisecond)(JustStartOptions{})
+func TestWithEvery_SetsATickingTicker(t *testing.T) {
+	opt := WithEvery(10 * time.Millisecond)(JustStartOptions{})
 	if opt.Ticker == nil {
-		t.Fatal("expected WithDuration to set a non-nil Ticker")
+		t.Fatal("expected WithEvery to set a non-nil Ticker")
 	}
 	select {
 	case <-opt.Ticker:
 	case <-time.After(500 * time.Millisecond):
-		t.Error("Ticker from WithDuration never ticked")
+		t.Error("Ticker from WithEvery never ticked")
 	}
 }
 
@@ -254,12 +254,12 @@ func TestJustStart_DefaultOptionsSucceedsViaPassthrough(t *testing.T) {
 		t.Fatal("expected a non-nil pair")
 	}
 
-	if err := pair.Spinny.Start(context.Background()); err != nil {
+	if err := pair.Spinner.Start(context.Background()); err != nil {
 		t.Errorf("expected passthrough Start to be a no-op, got %v", err)
 	}
 
 	select {
-	case _, ok := <-pair.Err():
+	case _, ok := <-pair.Spinner.Err():
 		if ok {
 			t.Errorf("expected a passthrough pair's Err() channel to be closed with no values")
 		}
@@ -267,7 +267,7 @@ func TestJustStart_DefaultOptionsSucceedsViaPassthrough(t *testing.T) {
 		t.Errorf("expected a passthrough pair's Err() channel to be immediately ready (closed)")
 	}
 
-	pair.Close()
+	_ = pair.Spinner.Close()
 }
 
 func TestJustStart_OptionsAreApplied(t *testing.T) {
@@ -278,7 +278,7 @@ func TestJustStart_OptionsAreApplied(t *testing.T) {
 	if pair == nil {
 		t.Fatal("expected a non-nil pair")
 	}
-	pair.Close()
+	_ = pair.Spinner.Close()
 }
 
 func TestJustStart_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
@@ -289,7 +289,7 @@ func TestJustStart_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
 	if pair == nil {
 		t.Fatal("expected a non-nil pair")
 	}
-	pair.Close()
+	_ = pair.Spinner.Close()
 }
 
 func withCIUnset(t *testing.T) {
@@ -327,9 +327,9 @@ func TestJustStart_StartContextStaysIndependentFromContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JustStart: %v", err)
 	}
-	defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	defer callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 
-	real := asReal(t, pair.Spinny)
+	real := asReal(t, pair.Spinner)
 	if !real.st.running.Load() {
 		t.Fatal("expected the spinner to be running immediately after JustStart")
 	}
@@ -346,10 +346,10 @@ func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("JustStart: %v", err)
 		}
-		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 
-		if _, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer); !ok {
-			t.Errorf("expected an *awareClearerDrawer, got %T", asReal(t, pair.Spinny).st.cd)
+		if _, ok := asReal(t, pair.Spinner).st.cd.(*awareClearerDrawer); !ok {
+			t.Errorf("expected an *awareClearerDrawer, got %T", asReal(t, pair.Spinner).st.cd)
 		}
 	})
 
@@ -361,11 +361,11 @@ func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("JustStart: %v", err)
 		}
-		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 
-		aware, ok := asReal(t, pair.Spinny).st.cd.(*awareClearerDrawer)
+		aware, ok := asReal(t, pair.Spinner).st.cd.(*awareClearerDrawer)
 		if !ok {
-			t.Fatalf("expected *awareClearerDrawer, got %T", asReal(t, pair.Spinny).st.cd)
+			t.Fatalf("expected *awareClearerDrawer, got %T", asReal(t, pair.Spinner).st.cd)
 		}
 		if got := aware.getWidth(); got != 40 {
 			t.Fatalf("expected initial width 40, got %d", got)
@@ -383,10 +383,10 @@ func TestJustStart_ResizeDetectionRoutesToAwareClearerDrawer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("JustStart: %v", err)
 		}
-		defer callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 
-		if _, ok := asReal(t, pair.Spinny).st.cd.(obliviousClearerDrawer); !ok {
-			t.Errorf("expected an obliviousClearerDrawer by default, got %T", asReal(t, pair.Spinny).st.cd)
+		if _, ok := asReal(t, pair.Spinner).st.cd.(obliviousClearerDrawer); !ok {
+			t.Errorf("expected an obliviousClearerDrawer by default, got %T", asReal(t, pair.Spinner).st.cd)
 		}
 	})
 }

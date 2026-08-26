@@ -16,19 +16,19 @@ import (
 
 func TestConcurrentWrites(t *testing.T) {
 	main := &syncBuffer{}
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 	ticker := make(chan time.Time)
 
-	pair, err := WrapPair(context.Background(), main, spinny, staticFrame([]byte("*")), ticker)
+	pair, err := WrapPair(context.Background(), main, spinner, staticFrame([]byte("*")), ticker)
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
 
 	const goroutines = 20
 	const writesEach = 50
@@ -57,19 +57,19 @@ func TestConcurrentWrites(t *testing.T) {
 }
 
 func TestConcurrentSetAndWrite(t *testing.T) {
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 	ticker := make(chan time.Time)
 
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, staticFrame([]byte("*")), ticker)
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("*")), ticker)
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinny.Stop() })
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
 
 	frames := [][]byte{[]byte("a"), []byte("b"), []byte("c"), []byte("d")}
 
@@ -78,7 +78,7 @@ func TestConcurrentSetAndWrite(t *testing.T) {
 		frame := frames[i%len(frames)]
 
 		wg.Go(func() {
-			if err := pair.Spinny.Set(staticFrame(frame)); err != nil {
+			if err := pair.Spinner.Set(staticFrame(frame)); err != nil {
 				t.Errorf("set error: %v", err)
 			}
 		})
@@ -95,15 +95,15 @@ func TestConcurrentSetAndWrite(t *testing.T) {
 
 func TestConcurrentTicksAndWrites(t *testing.T) {
 	main := &syncBuffer{}
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 	ticker := make(chan time.Time)
 
-	pair, err := WrapPair(context.Background(), main, spinny, staticFrame([]byte("*")), ticker)
+	pair, err := WrapPair(context.Background(), main, spinner, staticFrame([]byte("*")), ticker)
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestConcurrentTicksAndWrites(t *testing.T) {
 	<-tickerDone
 
 	var stopErr error
-	callWithTimeout(t, 2*time.Second, "Stop", func() { stopErr = pair.Spinny.Stop() })
+	callWithTimeout(t, 2*time.Second, "Stop", func() { stopErr = pair.Spinner.Stop() })
 	if stopErr != nil {
 		t.Fatalf("stop: %v", stopErr)
 	}
@@ -159,12 +159,12 @@ func TestConcurrentStartStop(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Spinny.Start(ctx) }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinner.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Spinny.Stop() }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinner.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
@@ -181,9 +181,9 @@ func TestConcurrentStartStop(t *testing.T) {
 
 func TestConcurrentStartStopWithWrites(t *testing.T) {
 	main := &syncBuffer{}
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 
-	pair, err := WrapPair(context.Background(), main, spinny, staticFrame([]byte("*")), make(chan time.Time))
+	pair, err := WrapPair(context.Background(), main, spinner, staticFrame([]byte("*")), make(chan time.Time))
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
@@ -194,12 +194,12 @@ func TestConcurrentStartStopWithWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 30 {
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Spinny.Start(ctx) }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinner.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
 		wg.Go(func() {
-			if r := runRecovered(func() { _ = pair.Spinny.Stop() }); r != nil {
+			if r := runRecovered(func() { _ = pair.Spinner.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
 		})
@@ -220,7 +220,7 @@ func TestConcurrentStartStopWithWrites(t *testing.T) {
 }
 
 func TestConcurrentTicks_OverlappingFetchesSkipWhileOneIsInFlight(t *testing.T) {
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 	var calls atomic.Int32
 	release := make(chan struct{})
 	inner := Simple([]string{"a", "b", "c", "d", "e"})
@@ -234,11 +234,11 @@ func TestConcurrentTicks_OverlappingFetchesSkipWhileOneIsInFlight(t *testing.T) 
 	}
 
 	ticker := make(chan time.Time)
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, frameFn, ticker)
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, frameFn, ticker)
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -255,16 +255,16 @@ func TestConcurrentTicks_OverlappingFetchesSkipWhileOneIsInFlight(t *testing.T) 
 
 	close(release)
 
-	waitForCondition(t, func() bool { return strings.Contains(spinny.String(), "b") })
+	waitForCondition(t, func() bool { return strings.Contains(spinner.String(), "b") })
 
 	ticker <- time.Now()
 	waitForCondition(t, func() bool { return calls.Load() == 3 })
 
-	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
-	spinny := &syncBuffer{}
+	spinner := &syncBuffer{}
 	var oldCalls atomic.Int32
 	oldRelease := make(chan struct{})
 
@@ -277,11 +277,11 @@ func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 	}
 
 	ticker := make(chan time.Time)
-	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, oldGetFrame, ticker)
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, oldGetFrame, ticker)
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 	setDone := make(chan struct{})
 	go func() {
 		defer close(setDone)
-		if err := pair.Spinny.Set(staticFrame([]byte("old-fast"))); err != nil {
+		if err := pair.Spinner.Set(staticFrame([]byte("old-fast"))); err != nil {
 			t.Errorf("Set: %v", err)
 		}
 	}()
@@ -307,24 +307,13 @@ func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
-	if got := spinny.String(); !strings.HasSuffix(got, "old-fast") {
+	if got := spinner.String(); !strings.HasSuffix(got, "old-fast") {
 		t.Errorf("display did not converge on the new getFrame's output after the swap: %q", got)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
-// windDown (background.go) closes st.errCh unconditionally when the actor
-// shuts down - unlike start, stop(clear:false), and setGetFrame, it never
-// waits on st.wg first. So a ticker-triggered fetch still in flight when
-// Close lands can have its FrameFunc panic and try to report that panic via
-// fireEvent(Panic{...}, st.errCh) at the same moment windDown closes that
-// same channel. fireEvent's own recover() keeps this from crashing the
-// process, but it's still a genuine data race on the channel, caught by
-// -race. This gates the second (tick-triggered) call so the panic and the
-// shutdown race deterministically enough to trigger on nearly every run,
-// rather than relying on incidental overlap the way a broad stress test
-// would.
 func TestErrCh_WindDownRacesTickerGoroutinePanicReport(t *testing.T) {
 	for range 100 {
 		entered := make(chan struct{})
@@ -344,7 +333,7 @@ func TestErrCh_WindDownRacesTickerGoroutinePanicReport(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WrapPair: %v", err)
 		}
-		callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+		callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 		if err != nil {
 			t.Fatalf("start: %v", err)
 		}
@@ -356,8 +345,8 @@ func TestErrCh_WindDownRacesTickerGoroutinePanicReport(t *testing.T) {
 			t.Fatal("tick-triggered fetch never reached the gate")
 		}
 
-		close(release) // let the panic race windDown's close(st.errCh) below
-		callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+		close(release)
+		callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 	}
 }
 
@@ -388,7 +377,7 @@ func TestFrameFunc_NeverCalledConcurrently_SlowTickInFlightAcrossStopStart(t *te
 		t.Fatalf("WrapPair: %v", err)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -397,13 +386,13 @@ func TestFrameFunc_NeverCalledConcurrently_SlowTickInFlightAcrossStopStart(t *te
 	<-entered
 
 	callWithTimeout(t, 2*time.Second, "Stop", func() {
-		if err := pair.Spinny.Stop(); err != nil {
+		if err := pair.Spinner.Stop(); err != nil {
 			t.Errorf("stop: %v", err)
 		}
 	})
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- pair.Spinny.Start(context.Background()) }()
+	go func() { startDone <- pair.Spinner.Start(context.Background()) }()
 
 	time.Sleep(100 * time.Millisecond)
 	close(release)
@@ -421,7 +410,7 @@ func TestFrameFunc_NeverCalledConcurrently_SlowTickInFlightAcrossStopStart(t *te
 		t.Error("FrameFunc was called concurrently with itself across a Stop+Start while a tick-triggered fetch was still in flight - violates the FrameFunc \"never called concurrently\" contract")
 	}
 
-	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
@@ -444,7 +433,7 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -455,7 +444,7 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	setDone := make(chan struct{})
 	go func() {
 		defer close(setDone)
-		if err := pair.Spinny.Set(getFrame); err != nil {
+		if err := pair.Spinner.Set(getFrame); err != nil {
 			t.Errorf("Set: %v", err)
 		}
 	}()
@@ -469,7 +458,7 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 		t.Fatal("Set did not return")
 	}
 
-	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestStart_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
@@ -487,11 +476,11 @@ func TestStart_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	}
 
 	startDone := make(chan error, 1)
-	go func() { startDone <- pair.Spinny.Start(context.Background()) }()
+	go func() { startDone <- pair.Spinner.Start(context.Background()) }()
 	<-entered
 
 	closeDone := make(chan struct{})
-	go func() { pair.Close(); close(closeDone) }()
+	go func() { _ = pair.Spinner.Close(); close(closeDone) }()
 
 	select {
 	case err := <-startDone:
@@ -527,17 +516,17 @@ func TestStopNoClear_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
 	stopDone := make(chan error, 1)
-	go func() { stopDone <- pair.Spinny.StopNoClear("") }()
+	go func() { stopDone <- pair.Spinner.StopNoClear("") }()
 	<-entered
 
 	closeDone := make(chan struct{})
-	go func() { pair.Close(); close(closeDone) }()
+	go func() { _ = pair.Spinner.Close(); close(closeDone) }()
 
 	select {
 	case err := <-stopDone:
@@ -569,17 +558,17 @@ func TestSetGetFrame_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
 
 	setDone := make(chan error, 1)
-	go func() { setDone <- pair.Spinny.Set(blockingFrame) }()
+	go func() { setDone <- pair.Spinner.Set(blockingFrame) }()
 	<-entered
 
 	closeDone := make(chan struct{})
-	go func() { pair.Close(); close(closeDone) }()
+	go func() { _ = pair.Spinner.Close(); close(closeDone) }()
 
 	select {
 	case err := <-setDone:
@@ -658,17 +647,17 @@ func TestStress_1000GoroutinesMixedOperationsWithFaultyInputs(t *testing.T) {
 			}()
 			switch i % 6 {
 			case 0:
-				_ = pair.Spinny.Start(ctx)
+				_ = pair.Spinner.Start(ctx)
 			case 1:
-				_ = pair.Spinny.Stop()
+				_ = pair.Spinner.Stop()
 			case 2:
-				_ = pair.Spinny.Set(frame)
+				_ = pair.Spinner.Set(frame)
 			case 3:
 				_, _ = pair.Standard.Write([]byte("x\n"))
 			case 4:
-				_ = pair.Spinny.StopNoClear("bye")
+				_ = pair.Spinner.StopNoClear("bye")
 			case 5:
-				_ = pair.Spinny.StopWith("done")
+				_ = pair.Spinner.StopWith("done")
 			}
 		})
 	}
@@ -684,7 +673,7 @@ func TestStress_1000GoroutinesMixedOperationsWithFaultyInputs(t *testing.T) {
 		t.Errorf("expected no panic to ever escape a public API call regardless of what the FrameFunc does internally, but %d did", got)
 	}
 
-	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
@@ -695,9 +684,9 @@ func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WrapPair: %v", err)
 	}
-	defer pair.Close()
+	defer func() { _ = pair.Spinner.Close() }()
 
-	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(context.Background()) })
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -710,14 +699,14 @@ func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_, _ = pair.Spinny.Write([]byte("x\n"))
+				_, _ = pair.Spinner.Write([]byte("x\n"))
 			}
 		}
 	})
 
 	for range 2000 {
-		_ = pair.Spinny.StopNoClear("")
-		_ = pair.Spinny.Start(context.Background())
+		_ = pair.Spinner.StopNoClear("")
+		_ = pair.Spinner.Start(context.Background())
 	}
 
 	close(stop)

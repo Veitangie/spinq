@@ -27,9 +27,9 @@ func main() {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
 	}
-	defer p.Close()
+	defer p.Spinner.Close()
 
-	stdout, stderr := p.Standard, p.Spinny
+	stdout, stderr := p.Standard, p.Spinner
 	stderr.Start(context.Background())
 
 	latch := &sync.WaitGroup{}
@@ -51,5 +51,5 @@ func main() {
 
 	latch.Done()
 	wg.Wait()
-	p.Spinny.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetStyle + " Done\n")
+	stderr.StopNoClear(" " + spinq.Green + "✓" + spinq.ResetStyle + " Done\n")
 }

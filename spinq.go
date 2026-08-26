@@ -94,9 +94,9 @@ func WithTicker(ticker <-chan time.Time) JustStartOptionsFunc {
 	}
 }
 
-// WithDuration sets the ticker driving redraws to Every(d). A non-positive
+// WithEvery sets the ticker driving redraws to Every(d). A non-positive
 // d (see Every) makes JustStart fail with a clean error.
-func WithDuration(d time.Duration) JustStartOptionsFunc {
+func WithEvery(d time.Duration) JustStartOptionsFunc {
 	return func(jso JustStartOptions) JustStartOptions {
 		jso.Ticker = Every(d)
 		return jso
@@ -180,9 +180,9 @@ func Default() JustStartOptions {
 
 // JustStart is the zero-configuration entry point for the common case: it
 // wraps WrapOS with sensible defaults (see Default) and starts the spinner
-// immediately, returning the resulting *SpinqPair. It does not defer
+// immediately, returning the resulting *Pair. It does not defer
 // Stop/Close - that remains the caller's responsibility, same as WrapOS.
-func JustStart(opts ...JustStartOptionsFunc) (*SpinqPair, error) {
+func JustStart(opts ...JustStartOptionsFunc) (*Pair, error) {
 	opt := Default()
 	for _, f := range opts {
 		if f != nil {
@@ -205,6 +205,6 @@ func JustStart(opts ...JustStartOptionsFunc) (*SpinqPair, error) {
 		return nil, err
 	}
 
-	err = pair.Spinny.Start(opt.StartContext)
+	err = pair.Spinner.Start(opt.StartContext)
 	return pair, err
 }

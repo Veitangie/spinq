@@ -230,7 +230,7 @@ func TestBarOptionsPresets(t *testing.T) {
 		want string
 	}{
 		{"Rounded", WithRoundedBarOptions(), "(###>------)"},
-		{"Shade", WithShadeBarOptions(), "█████░░░░░░░"},
+		{"Shade", WithShadeBarOptions(), "█████       "},
 		{"Dot", WithDotBarOptions(), "(●●●●○○○○○○)"},
 		{"Minimal", WithMinimalBarOptions(), "####>-------"},
 		{"Thin", WithThinBarOptions(), "▰▰▰▰▰▱▱▱▱▱▱▱"},
@@ -244,16 +244,37 @@ func TestBarOptionsPresets(t *testing.T) {
 	}
 }
 
+func TestSmoothBarOptionsPresets(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts SmoothBarOptionsFunc
+		want string
+	}{
+		{"Snake", WithSnakeSmoothOptions(), "⠿⠿⠿⠿⠧       "},
+		{"Braille", WithBrailleSmoothOptions(), "⠿⠿⠿⠿⠏       "},
+		{"Pie", WithPieSmoothOptions(), "(●●●●○○○○○○)"},
+		{"Dot", WithDotSmoothOptions(), "(●●●●○○○○○○)"},
+		{"Shade", WithShadeSmoothOptions(), "████▓       "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SmoothBarRender(12, tc.opts)(4, 10)
+			if string(got) != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestSmoothBarRender_RendersAtVariousLevels(t *testing.T) {
 	r := SmoothBarRender(18)
 	for _, tc := range []struct {
 		current int
 		want    string
 	}{
-		{0, "▏                 "},
-		{2, "███▋              "},
-		{5, "█████████▏        "},
-		{8, "██████████████▌   "},
+		{0, "                  "},
+		{2, "███▌              "},
+		{5, "█████████         "},
+		{8, "██████████████▍   "},
 		{10, "██████████████████"},
 	} {
 		got := r(tc.current, 10)

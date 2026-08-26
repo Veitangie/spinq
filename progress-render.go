@@ -102,14 +102,14 @@ type SmoothBarOptions struct {
 	Direction RenderDirection
 }
 
-// DefaultSmoothBarOptions returns SmoothBarRender's default options: a
-// "[...]"-bracketed bar using Unicode eighths block characters ("▏".."█")
-// as its Dividers, for sub-cell-precision fill.
+// DefaultSmoothBarOptions returns SmoothBarRender's default options: an
+// unbracketed bar using Unicode eighths block characters as its
+// Dividers, for sub-cell-precision fill.
 func DefaultSmoothBarOptions() SmoothBarOptions {
 	return SmoothBarOptions{
 		Start:     "",
 		Full:      "█",
-		Dividers:  []string{"▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"},
+		Dividers:  []string{" ", "▏", "▎", "▍", "▌", "▋", "▊", "▉"},
 		Empty:     " ",
 		End:       "",
 		Direction: Right,
@@ -141,6 +141,11 @@ func SmoothWithFull(full string) SmoothBarOptionsFunc {
 // returns NoopRender. Fewer than two dividers falls back to BarRender: zero
 // dividers uses BarRender's own default divider, one divider is used as
 // BarRender's fixed divider.
+//
+// dividers[0] should equal Empty and the last entry should not equal Full:
+// SmoothBarRender always shows a divider at exactly 0%, but never at
+// exactly 100%, so those are the only two entries that can make an
+// in-progress cell falsely render as truly empty or truly full.
 func SmoothWithDivider(dividers []string) SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		bo.Dividers = dividers
@@ -178,6 +183,106 @@ func SmoothWithDirection(direction RenderDirection) SmoothBarOptionsFunc {
 func WithSmoothOptions(opt SmoothBarOptions) SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return opt
+	}
+}
+
+// WithSnakeSmoothOptions returns a preset SmoothBarOptions styled as
+// "⠿⠧⠁", with no brackets, blank empty cells, and the boundary divider
+// snaking around a Braille cell's perimeter (⠁⠃⠇⠧⠷). See
+// WithBrailleSmoothOptions for the same idea filling column by column
+// instead. Like WithSmoothOptions, it replaces the whole SmoothBarOptions
+// - apply it before any SmoothWith* tweaks in the same SmoothBarRender
+// call, not after, or it discards them.
+func WithSnakeSmoothOptions() SmoothBarOptionsFunc {
+	return func(bo SmoothBarOptions) SmoothBarOptions {
+		return SmoothBarOptions{
+			Start:     "",
+			Full:      "⠿",
+			Dividers:  []string{" ", "⠁", "⠃", "⠇", "⠧", "⠷"},
+			Empty:     " ",
+			End:       "",
+			Direction: Right,
+		}
+	}
+}
+
+// WithBrailleSmoothOptions returns a preset SmoothBarOptions styled as
+// "⠿⠟⠁", with no brackets, blank empty cells, and the boundary divider
+// filling a Braille cell column by column, left then right (⠁⠃⠇⠏⠟) - the
+// order a Braille cell is naturally read in, unlike
+// WithSnakeSmoothOptions' perimeter order. Like WithSmoothOptions, it
+// replaces the whole SmoothBarOptions - apply it before any SmoothWith*
+// tweaks in the same SmoothBarRender call, not after, or it discards
+// them.
+func WithBrailleSmoothOptions() SmoothBarOptionsFunc {
+	return func(bo SmoothBarOptions) SmoothBarOptions {
+		return SmoothBarOptions{
+			Start:     "",
+			Full:      "⠿",
+			Dividers:  []string{" ", "⠁", "⠃", "⠇", "⠏", "⠟"},
+			Empty:     " ",
+			End:       "",
+			Direction: Right,
+		}
+	}
+}
+
+// WithPieSmoothOptions returns a preset SmoothBarOptions styled as
+// "●◕○", using a filling-circle boundary divider (○◔◑◕). The quarter-circle
+// glyphs (◔◕) are font-dependent - some fonts render them inconsistently
+// with the rest - so use at your own discretion; WithDotSmoothOptions is
+// the same idea restricted to glyphs with much more consistent font
+// support. Like WithSmoothOptions, it replaces the whole SmoothBarOptions
+// - apply it before any SmoothWith* tweaks in the same SmoothBarRender
+// call, not after, or it discards them.
+func WithPieSmoothOptions() SmoothBarOptionsFunc {
+	return func(bo SmoothBarOptions) SmoothBarOptions {
+		return SmoothBarOptions{
+			Start:     "(",
+			Full:      "●",
+			Dividers:  []string{"○", "◔", "◑", "◕"},
+			Empty:     "○",
+			End:       ")",
+			Direction: Right,
+		}
+	}
+}
+
+// WithDotSmoothOptions returns a preset SmoothBarOptions styled as
+// "●◐○", using a filling-circle boundary divider (○◐) - WithPieSmoothOptions
+// with only the half-circle step, skipping the quarter-circle glyphs
+// (◔◕) that render inconsistently in some fonts. Like WithSmoothOptions,
+// it replaces the whole SmoothBarOptions - apply it before any
+// SmoothWith* tweaks in the same SmoothBarRender call, not after, or it
+// discards them.
+func WithDotSmoothOptions() SmoothBarOptionsFunc {
+	return func(bo SmoothBarOptions) SmoothBarOptions {
+		return SmoothBarOptions{
+			Start:     "(",
+			Full:      "●",
+			Dividers:  []string{"○", "◐"},
+			Empty:     "○",
+			End:       ")",
+			Direction: Right,
+		}
+	}
+}
+
+// WithShadeSmoothOptions returns a preset SmoothBarOptions styled as
+// "██▓  ", with no brackets, blank empty cells, and the boundary divider
+// deepening through ░▒▓. Like WithSmoothOptions, it replaces the whole
+// SmoothBarOptions - apply it before any SmoothWith* tweaks in the same
+// SmoothBarRender call, not after, or it discards them.
+func WithShadeSmoothOptions() SmoothBarOptionsFunc {
+	return func(bo SmoothBarOptions) SmoothBarOptions {
+		return SmoothBarOptions{
+			Start:     "",
+			Full:      "█",
+			Dividers:  []string{" ", "░", "▒", "▓"},
+			Empty:     " ",
+			End:       "",
+			Direction: Right,
+		}
 	}
 }
 
@@ -220,17 +325,18 @@ func WithRoundedBarOptions() BarOptionsFunc {
 	}
 }
 
-// WithShadeBarOptions returns a preset BarOptions styled as "███░░░", using
-// shaded block characters with no brackets. Like WithBarOptions, it replaces
-// the whole BarOptions - apply it before any BarWith* tweaks in the same
-// BarRender call, not after, or it discards them.
+// WithShadeBarOptions returns a preset BarOptions styled as "███   ", using
+// a shaded block character with no brackets and a blank empty background.
+// Like WithBarOptions, it replaces the whole BarOptions - apply it before
+// any BarWith* tweaks in the same BarRender call, not after, or it
+// discards them.
 func WithShadeBarOptions() BarOptionsFunc {
 	return func(bo BarOptions) BarOptions {
 		return BarOptions{
 			Start:     "",
 			Full:      "█",
 			Divider:   "█",
-			Empty:     "░",
+			Empty:     " ",
 			End:       "",
 			Direction: Right,
 		}

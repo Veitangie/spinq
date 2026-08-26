@@ -15,7 +15,6 @@ import (
 
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
-	"golang.org/x/sync/singleflight"
 )
 
 // SpinqPair bundles two writers sharing one spinner: Standard - an io.Writer
@@ -93,7 +92,8 @@ func DefaultWrapOptions() WrapOptions {
 // CachedGetWidth's output), shaped with Offset/Portion/Clamp as needed.
 // See WrapWithDefaultResizeDetection/WrapDefaultResizeDetection for
 // zero-configuration sources. A nil getWidth is a no-op, leaving resize
-// detection off.
+// detection off. A panicking getWidth never crashes the process, reporting
+// 0 for that call instead.
 func WrapWithResizeDetection(getWidth func() int) WrapOptionsFunc {
 	if getWidth == nil {
 		return func(wo WrapOptions) WrapOptions { return wo }
@@ -148,11 +148,11 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 
 	getWidth := func() int { return -1 }
 	if opt.GetWidth != nil {
+		getWidth = zeroOnPanic(opt.GetWidth)
 		cd = &awareClearerDrawer{
-			getWidth: opt.GetWidth,
-			width:    opt.GetWidth(),
+			getWidth: getWidth,
+			width:    getWidth(),
 		}
-		getWidth = opt.GetWidth
 	}
 
 	withCancel, cancel := context.WithCancel(ctx)
@@ -161,7 +161,6 @@ func WrapPair(ctx context.Context, main, spinny io.Writer, getFrame FrameFunc, t
 	st := &spinnerState{
 		writerMut: &sync.Mutex{},
 		wrapped:   spinny,
-		sg:        &singleflight.Group{},
 		wg:        &sync.WaitGroup{},
 		cd:        cd,
 		errCh:     errCh,

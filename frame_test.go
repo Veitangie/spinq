@@ -262,6 +262,40 @@ func TestDuration_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestDuration_ExplicitlyNilFormatFromCustomOptionsFuncReturnsNoop(t *testing.T) {
+	nilOutFormat := func(do DurationOptions) DurationOptions {
+		do.Format = nil
+		return do
+	}
+
+	got, err := Duration(time.Now, nilOutFormat)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected an empty frame from Noop, got %q", got)
+	}
+}
+
+func TestJoin_AllNilReturnsNoop(t *testing.T) {
+	got, err := Join(" ", nil, nil)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected an empty frame from Noop, got %q", got)
+	}
+}
+
+func TestJoin_AllSegmentsErrorReturnsErrNoFrame(t *testing.T) {
+	f := Join(" ", errorFrame(errors.New("boom 1")), errorFrame(errors.New("boom 2")))
+
+	_, err := f()
+	if !errors.Is(err, ErrNoFrame) {
+		t.Errorf("expected ErrNoFrame when every segment errors on a call, got %v", err)
+	}
+}
+
 func TestDuration_NilFormatDoesNotPanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {

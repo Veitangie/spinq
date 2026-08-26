@@ -188,11 +188,9 @@ All three examples live in [`examples/`](examples/) and run as-is with `go run .
 
 Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
 
-- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq ships six direct dependencies, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) and [`uax29`](https://github.com/clipperhouse/uax29) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), `golang.org/x/term` for terminal-size queries, and `golang.org/x/sync` for the concurrency primitive that keeps `FrameFunc` calls serialized. Everything else is standard library.
+- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq ships five direct dependencies, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) and [`uax29`](https://github.com/clipperhouse/uax29) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. Everything else is standard library.
 
-- **Forcing the user to give up the stdout/stderr split.** A lot of spinner libraries want to *own* the output - you print through their writer, or not at all, and the Unix convention of "stdout is data, stderr is status" is not supported. spinq still needs you to write through its writers. But spinq keeps both streams separate and independently addressable: `pair.Standard` and `pair.Spinny` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them instead of collapsing them into one.
-
-- **Only ever managing stderr.** Some libraries only consider the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq's approach of bundling two writers allows it to manage the spinner without risking corruption on the other stream. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
+- **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinny` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
 
 If none of that matters for your use case, you probably don't need spinq - plenty of other great options exist. If it does, spinq was made to solve exactly these problems.
 
@@ -220,7 +218,7 @@ spinq is scoped deliberately narrow - see above. That's not the right shape for 
 
 - **[cheggaaa/pb](https://github.com/cheggaaa/pb)** - similar multi-bar territory (it calls this a pool), plus built-in `io.Reader`/`io.Writer` wrapping so a bar tracks bytes read or written from a stream without you wiring up a counter yourself, and byte-unit formatting (KiB/MiB/...) out of the box.
 
-- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~3x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
+- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~5x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
 
 - **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
 
@@ -233,20 +231,20 @@ If what you want is a spinner and/or a single-line progress bar, coordinated wit
 <details id="footprint-comparison">
 <summary>Full size comparison, if you want the numbers behind "roughly Nx heavier"</summary>
 
-Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in this section. This isn't cherry-picked to flatter spinq - two of the alternatives below are genuinely smaller:
+Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in this section, each at its latest tagged release. This isn't cherry-picked to flatter spinq - one of the alternatives below is genuinely smaller (a bare spinner, nothing else):
 
-| library | scope | delta | vs. spinq |
-|---|---|---:|---:|
-| [briandowns/spinner](https://github.com/briandowns/spinner) | bare spinner only | 376 KB | 0.42x |
-| [yacspin](https://github.com/theckman/yacspin) | bare spinner only, configurable | 844 KB | 0.94x |
-| **spinq** | spinner + bar + resize-aware + grapheme-correct | **892 KB** | **1.00x** |
-| [mpb](https://github.com/vbauerster/mpb) | dedicated multi-progress-bar library | 1016 KB | 1.13x |
-| [pterm](https://github.com/pterm/pterm) | full styled-console toolkit | 1448 KB | 1.62x |
-| [bubbletea](https://github.com/charmbracelet/bubbletea) | Elm-architecture TUI framework | 1736 KB | 1.94x |
-| [cheggaaa/pb](https://github.com/cheggaaa/pb) | dedicated progress-bar library | 2232 KB | 2.50x |
-| [schollz/progressbar](https://github.com/schollz/progressbar) | dedicated progress-bar library | 3000 KB | 3.36x |
+| library | version | scope | delta | vs. spinq |
+|---|---|---|---:|---:|
+| [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.59x |
+| **spinq** | **unreleased, past v1.0.0-rc.9** | spinner + bar + resize-aware + grapheme-correct | **640 KB** | **1.00x** |
+| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.32x |
+| [mpb](https://github.com/vbauerster/mpb) | v8.16.0 | dedicated multi-progress-bar library | 1020 KB | 1.59x |
+| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1468 KB | 2.29x |
+| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1952 KB | 3.05x |
+| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2236 KB | 3.49x |
+| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.69x |
 
-Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently. Measured August 2026, same Go toolchain throughout.
+Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured August 2026, same Go toolchain (go1.27.0) throughout.
 
 </details>
 
@@ -257,6 +255,14 @@ go get veitangie.dev/spinq
 ```
 
 Requires the Go version declared in `go.mod`.
+
+## Versioning
+
+spinq follows semantic versioning, judged strictly from the calling code's perspective:
+
+- **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior (e.g. what happens if you call a lifecycle method on `Pair.Standard` it was never meant to have), adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
+- **Minor** - additive: everything that already compiled keeps compiling and behaving the same. A new optional parameter via `...T`, a new method, a new exported function or type.
+- **Major** - anything that breaks compilation for existing callers - a changed signature on an existing exported function or method - or breaks an existing behavioral contract even without a signature change, such as a guarantee spinq previously made and no longer keeps. As Go modules require, a major bump also gets a new import path (`veitangie.dev/spinq/v2`, and so on).
 
 ## Quick start
 
@@ -378,11 +384,7 @@ go func() {
 
 ## Design
 
-A single background goroutine (an actor) owns all spinner state and is the only thing that ever touches it. Every public method talks to it over a channel. Overlapping calls to the same `FrameFunc` - from a tick landing while another fetch is still in flight, for instance - are coalesced through a `singleflight.Group`. See [pkg.go.dev](https://pkg.go.dev/veitangie.dev/spinq) for the full API reference.
-
-## Acknowledgments
-
-`StripANSI`/`StripANSIBytes` - used internally to measure a frame's true display width without counting escape codes as visible characters - is [Andrew Carlson's stripansi](https://github.com/acarl005/stripansi), © 2018, MIT License; see that file's own header for the full notice. spinq's own code remains Apache 2.0 throughout.
+A single background goroutine (an actor) owns all spinner state and is the only thing that ever touches it. Every public method talks to it over a channel. A tick-triggered fetch runs in its own goroutine, so a slow `FrameFunc` never blocks the actor from handling other calls - but the actor tracks that fetch and waits for it to finish before ever calling `FrameFunc` again, so the "never called concurrently with itself" guarantee still holds. A panic inside `FrameFunc` is recovered, reported on `Err()`, and never crashes the process. See [pkg.go.dev](https://pkg.go.dev/veitangie.dev/spinq) for the full API reference.
 
 ## License
 

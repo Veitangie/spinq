@@ -15,6 +15,19 @@ import (
 	"golang.org/x/term"
 )
 
+func zeroOnPanic(underlying func() int) func() int {
+	return func() (res int) {
+		defer func() {
+			if recover() != nil {
+				res = 0
+			}
+		}()
+
+		res = underlying()
+		return
+	}
+}
+
 // CachedGetWidth wraps a (possibly expensive, e.g. syscall-backed) getWidth
 // behind a cheap, shareable one: it calls the real getWidth once up front
 // and again on each sigwinch signal, caching the result in an atomic the
@@ -22,7 +35,11 @@ import (
 // sigwinch channel, but the returned func itself can be called freely
 // from anywhere - always prefer passing its output into
 // Dynamic/DynamicRender/WrapWithResizeDetection over a raw getWidth.
+//
+// The returned func never crashes on a panicking getWidth, reporting 0
+// instead for that call - same fallback as a failed WidthFromFile query.
 func CachedGetWidth(sigwinch <-chan struct{}, getWidth func() int) func() int {
+	getWidth = zeroOnPanic(getWidth)
 	current := atomic.Int64{}
 	current.Store(int64(getWidth()))
 	go func() {

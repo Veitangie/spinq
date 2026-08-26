@@ -466,6 +466,18 @@ func TestSmoothWithOptions_ReplacesWholeStruct(t *testing.T) {
 	}
 }
 
+func TestDynamicRender_PanickingGetWidthDoesNotPanicAtConstruction(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("DynamicRender(panicking getWidth, ...) panicked at construction: %v", r)
+		}
+	}()
+
+	_ = DynamicRender(func() int { panic("boom: deliberate getWidth panic") }, func(int) RenderFunc {
+		return NoopRender()
+	})
+}
+
 func TestDynamicRender_NilGetWidthFallsBackToNoop(t *testing.T) {
 	var got []byte
 	func() {

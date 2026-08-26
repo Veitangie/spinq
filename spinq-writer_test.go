@@ -1078,6 +1078,20 @@ func TestTicker_IgnoredWhileNotRunning(t *testing.T) {
 	}
 }
 
+func TestStart_NilContextFallsBackToSpinnersOwnContext(t *testing.T) {
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinny.Start(nil) }) //nolint:staticcheck
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Close", func() { pair.Close() })
+}
+
 func TestStart_CtxCancellationStopsSpinner(t *testing.T) {
 	spinny := &syncBuffer{}
 	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinny, staticFrame([]byte("*")), make(chan time.Time))
@@ -1191,6 +1205,98 @@ func TestSetGetFrameWriteFailureThenCloseHelperProcess(t *testing.T) {
 	_ = pair.Spinny.Set(staticFrame([]byte("different")))
 	pair.Close()
 	fmt.Println("SURVIVED")
+}
+
+func TestTickerPanicHelperProcess(t *testing.T) {
+	if os.Getenv("SPINQ_TICKER_PANIC_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper; see TestTicker_PanickingFrameFuncDoesNotCrashProcess")
+	}
+
+	var calls atomic.Int64
+	frame := func() ([]byte, error) {
+		if calls.Add(1) >= 2 {
+			panic("boom: deliberate ticker-triggered FrameFunc panic")
+		}
+		return []byte("*"), nil
+	}
+
+	ticker := make(chan time.Time)
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, frame, ticker)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "WrapPair:", err)
+		os.Exit(1)
+	}
+
+	if err := pair.Spinny.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "Start:", err)
+		os.Exit(1)
+	}
+	ticker <- time.Now()
+	time.Sleep(200 * time.Millisecond)
+
+	fmt.Println("SURVIVED")
+}
+
+func TestTicker_PanickingFrameFuncDoesNotCrashProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestTickerPanicHelperProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "SPINQ_TICKER_PANIC_HELPER=1")
+	out, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("subprocess did not exit within the timeout, output:\n%s", out)
+	}
+	if err != nil {
+		t.Errorf("expected a panicking tick-triggered FrameFunc not to crash the process: %v\noutput:\n%s", err, out)
+		return
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("expected the process to survive a panicking tick-triggered FrameFunc, output:\n%s", out)
+	}
+}
+
+func TestSetGetFramePanicHelperProcess(t *testing.T) {
+	if os.Getenv("SPINQ_SETGETFRAME_PANIC_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper; see TestSetGetFrame_PanickingFrameFuncDoesNotCrashProcess")
+	}
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "WrapPair:", err)
+		os.Exit(1)
+	}
+
+	if err := pair.Spinny.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "Start:", err)
+		os.Exit(1)
+	}
+
+	panicky := func() ([]byte, error) { panic("boom: deliberate setGetFrame-triggered FrameFunc panic") }
+	_ = pair.Spinny.Set(panicky)
+
+	fmt.Println("SURVIVED")
+}
+
+func TestSetGetFrame_PanickingFrameFuncDoesNotCrashProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSetGetFramePanicHelperProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "SPINQ_SETGETFRAME_PANIC_HELPER=1")
+	out, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("subprocess did not exit within the timeout, output:\n%s", out)
+	}
+	if err != nil {
+		t.Errorf("expected a panicking FrameFunc passed to Set not to crash the process: %v\noutput:\n%s", err, out)
+		return
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("expected the process to survive a panicking FrameFunc passed to Set, output:\n%s", out)
+	}
 }
 
 func TestSetGetFrame_WriteFailureThenCloseDoesNotCrashProcess(t *testing.T) {

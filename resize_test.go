@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,6 +135,20 @@ func TestSigwinchFromPoller_FiresPeriodicallyAndClosesOnCancel(t *testing.T) {
 	drainUntilClosed(t, sigwinch, 2*time.Second)
 }
 
+func TestSigwinchFromPoller_NonPositiveDurationReturnsNil(t *testing.T) {
+	if got := SigwinchFromPoller(context.Background(), 0); got != nil {
+		t.Errorf("expected a zero duration to return nil, got %v", got)
+	}
+	if got := SigwinchFromPoller(context.Background(), -time.Millisecond); got != nil {
+		t.Errorf("expected a negative duration to return nil, got %v", got)
+	}
+}
+
+func TestSigwinchFromPoller_NilContextReturnsAlreadyClosedChannel(t *testing.T) {
+	sigwinch := SigwinchFromPoller(nil, 5*time.Millisecond) //nolint:staticcheck
+	drainUntilClosed(t, sigwinch, 2*time.Second)
+}
+
 func TestSigwinchFromPollerNonPositiveDurationHelperProcess(t *testing.T) {
 	if os.Getenv("SPINQ_POLLER_NONPOS_DURATION_HELPER") != "1" {
 		t.Skip("only runs as a subprocess helper; see TestSigwinchFromPoller_NonPositiveDurationDoesNotCrashProcess")
@@ -215,6 +230,44 @@ func TestCachedGetWidth_CoalescesBurstOfSignalsIntoOneRealCall(t *testing.T) {
 	}
 }
 
+func TestCachedGetWidth_ClosedMidDrainStopsGoroutineCleanly(t *testing.T) {
+	sigwinch := make(chan struct{}, 4)
+	sigwinch <- struct{}{}
+	sigwinch <- struct{}{}
+	sigwinch <- struct{}{}
+	close(sigwinch)
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+
+	calls := &atomic.Int64{}
+	live := CachedGetWidth(sigwinch, func() int {
+		calls.Add(1)
+		return 80
+	})
+
+	waitForCondition(t, func() bool { return calls.Load() == 2 })
+	if got := live(); got != 80 {
+		t.Errorf("expected width 80, got %d", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got > before {
+		t.Errorf("expected CachedGetWidth's goroutine to exit once the closed, drained channel is observed, but goroutine count stayed at %d (was %d before) — goroutine dump:\n%s", got, before, dumpGoroutines())
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if got := calls.Load(); got != 2 {
+		t.Errorf("expected exactly 2 calls (upfront + the one draining the pre-buffered burst), got %d", got)
+	}
+}
+
 func TestCachedGetWidth_SafeForConcurrentReads(t *testing.T) {
 	sigwinch := make(chan struct{})
 	live := CachedGetWidth(sigwinch, func() int { return 80 })
@@ -269,6 +322,58 @@ func TestPortion_ClampsBelowZero(t *testing.T) {
 	width := Portion(func() int { return 80 }, -0.5)
 	if got := width(); got != 0 {
 		t.Errorf("expected the fraction to clamp to 0, got %d", got)
+	}
+}
+
+func TestZeroOnPanic_RecoversAndReturnsZero(t *testing.T) {
+	safe := zeroOnPanic(func() int { panic("boom: deliberate getWidth panic") })
+
+	if got := safe(); got != 0 {
+		t.Errorf("expected 0 from a panicking getWidth, got %d", got)
+	}
+}
+
+func TestZeroOnPanic_PassesThroughNormalResult(t *testing.T) {
+	safe := zeroOnPanic(func() int { return 80 })
+
+	if got := safe(); got != 80 {
+		t.Errorf("expected the underlying result to pass through unchanged, got %d", got)
+	}
+}
+
+func TestCachedGetWidthPanicHelperProcess(t *testing.T) {
+	if os.Getenv("SPINQ_CACHED_GETWIDTH_PANIC_HELPER") != "1" {
+		t.Skip("only runs as a subprocess helper; see TestCachedGetWidth_PanickingGetWidthDoesNotCrashProcess")
+	}
+
+	sigwinch := make(chan struct{}, 1)
+	getWidth := CachedGetWidth(sigwinch, func() int { panic("boom: deliberate getWidth panic") })
+	_ = getWidth()
+
+	sigwinch <- struct{}{}
+	time.Sleep(200 * time.Millisecond)
+	_ = getWidth()
+
+	fmt.Println("SURVIVED")
+}
+
+func TestCachedGetWidth_PanickingGetWidthDoesNotCrashProcess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCachedGetWidthPanicHelperProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "SPINQ_CACHED_GETWIDTH_PANIC_HELPER=1")
+	out, err := cmd.CombinedOutput()
+
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("subprocess did not exit within the timeout, output:\n%s", out)
+	}
+	if err != nil {
+		t.Errorf("expected a panicking getWidth passed to CachedGetWidth not to crash the process: %v\noutput:\n%s", err, out)
+		return
+	}
+	if !strings.Contains(string(out), "SURVIVED") {
+		t.Errorf("expected the process to survive a panicking getWidth, output:\n%s", out)
 	}
 }
 

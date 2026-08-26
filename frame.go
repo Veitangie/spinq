@@ -414,7 +414,7 @@ func Dynamic(getWidth func() int, build WidthFunc) FrameFunc {
 	if getWidth == nil || build == nil {
 		return Noop()
 	}
-	width := getWidth()
+	width := zeroOnPanic(getWidth)()
 	current := build(width)
 
 	return func() ([]byte, error) {

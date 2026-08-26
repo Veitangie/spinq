@@ -30,6 +30,7 @@ type setGetFrame struct {
 type drawFrame struct {
 	revision uint64
 	frame    []byte
+	err      error
 }
 
 type reportError struct {
@@ -37,14 +38,12 @@ type reportError struct {
 }
 
 func fireEvent[T any](t T, chT chan<- T) {
-	timer := time.NewTimer(10 * time.Millisecond)
 	defer func() {
 		_ = recover()
-		timer.Stop()
 	}()
 	select {
 	case chT <- t:
-	case <-timer.C:
+	case <-time.After(10 * time.Millisecond):
 	}
 }
 
@@ -68,14 +67,15 @@ func (st *spinnerState) startBackground() {
 						continue
 					}
 
-					frame, err := st.safeGetFrame(st.getFrame, st.revision)
+					st.wg.Wait()
+					frame, err := st.safeGetFrame(st.getFrame)
 					st.running.Store(true)
 					st.notifyStopped = typed.notifyStopped
 
 					if err == nil {
 						err = st.set(frame)
 						if err != nil {
-							st.stopFromBg()
+							st.stopFromActor()
 							typed.notify <- err
 						}
 					}
@@ -87,14 +87,13 @@ func (st *spinnerState) startBackground() {
 						continue
 					}
 
-					st.stopFromBg()
+					st.stopFromActor()
 					lastFrame := typed.lastFrame
 					prefix := []byte{}
 					if !typed.clear {
-						st.revision += 1
 						st.wg.Wait()
 
-						if maybePrefix, err := st.safeGetFrame(st.getFrame, st.revision); err == nil {
+						if maybePrefix, err := st.safeGetFrame(st.getFrame); err == nil {
 							prefix = maybePrefix
 						}
 					}
@@ -120,13 +119,18 @@ func (st *spinnerState) startBackground() {
 					close(typed.notify)
 
 				case drawFrame:
-					if !st.running.Load() || typed.revision != st.revision {
+					st.inFlight = false
+					if typed.revision != st.revision || !st.running.Load() {
+						continue
+					}
+
+					if typed.err != nil {
 						continue
 					}
 
 					err := st.set(typed.frame)
 					if err != nil {
-						st.stopFromBg()
+						st.stopFromActor()
 						fireEvent(fmt.Errorf("failed to draw frame, stopping: %w", err), st.errCh)
 					}
 
@@ -138,48 +142,49 @@ func (st *spinnerState) startBackground() {
 					}
 
 					st.getFrame = typed.getFrame
-					// Invalidate all stale in-flight getFrame calls
 					st.revision += 1
 
 					st.wg.Wait()
 
 					if st.running.Load() {
-						frame, err := st.safeGetFrame(st.getFrame, st.revision)
+						frame, err := st.safeGetFrame(st.getFrame)
 						if err == nil {
 							err = st.set(frame)
 							if err != nil {
-								st.stopFromBg()
+								st.stopFromActor()
 							}
 							typed.notify <- err
 						}
 					}
 
 					close(typed.notify)
+
 				case reportError:
-					st.stopFromBg()
+					st.stopFromActor()
 					fireEvent(typed.err, st.errCh)
+
 				default:
 					continue
 				}
 			case <-st.ticker:
-				if !st.running.Load() {
+				if st.inFlight || !st.running.Load() {
 					continue
 				}
 
 				st.wg.Add(1)
+				st.inFlight = true
 				go func(getFrame FrameFunc, revision uint64) {
-					frame, err := st.safeGetFrame(getFrame, revision)
+					frame, err := getFrame()
 					st.wg.Done()
-					if err == nil {
-						select {
-						case st.task <- drawFrame{
-							revision: revision,
-							frame:    frame,
-						}:
-						case <-st.ctx.Done():
-						}
+					select {
+					case st.task <- drawFrame{
+						revision: revision,
+						frame:    frame,
+						err:      err,
+					}:
+					case <-st.ctx.Done():
 					}
-				}(st.getFrame, st.revision)
+				}(st.safeGetFrameFunc(st.getFrame), st.revision)
 
 			case <-st.ctx.Done():
 				st.windDown()
@@ -196,6 +201,7 @@ func (st *spinnerState) windDown() {
 		close(st.notifyStopped)
 		st.notifyStopped = nil
 	}
+	st.wg.Wait()
 	st.writerMut.Lock()
 	err := st.clear()
 	st.writerMut.Unlock()
@@ -206,7 +212,7 @@ func (st *spinnerState) windDown() {
 }
 
 // NOT THREAD SAFE
-func (st *spinnerState) stopFromBg() {
+func (st *spinnerState) stopFromActor() {
 	st.running.Store(false)
 	if st.notifyStopped != nil {
 		close(st.notifyStopped)

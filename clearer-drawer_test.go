@@ -6,6 +6,7 @@ package spinq
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -426,7 +427,7 @@ func TestAwareClearerDrawer_Adjust(t *testing.T) {
 	})
 
 	t.Run("display-width fast path aliases the frame instead of copying it", func(t *testing.T) {
-		frame := []byte("⠋⠙⠹")
+		frame := []byte("abc")
 		a := &awareClearerDrawer{width: 3}
 		st := &spinnerState{frame: frame}
 		a.adjust(st)
@@ -434,13 +435,13 @@ func TestAwareClearerDrawer_Adjust(t *testing.T) {
 			t.Fatalf("expected visible to equal frame, got %q", a.visible)
 		}
 
-		frame[3] = 'X'
-		if a.visible[3] != 'X' {
+		frame[2] = 'X'
+		if a.visible[2] != 'X' {
 			t.Errorf("expected visible to alias frame's backing array (fast path taken), but it didn't observe the in-place mutation - got %q", a.visible)
 		}
 	})
 
-	t.Run("display-width fast path should apply to ANSI-styled frames too", func(t *testing.T) {
+	t.Run("an ANSI-styled frame whose display width fits but whose byte length doesn't takes the slow path", func(t *testing.T) {
 		frame := []byte("\033[32mHi\033[0m")
 		a := &awareClearerDrawer{width: 2}
 		st := &spinnerState{frame: frame}
@@ -450,8 +451,49 @@ func TestAwareClearerDrawer_Adjust(t *testing.T) {
 		}
 
 		frame[5] = 'X'
-		if a.visible[5] != 'X' {
-			t.Errorf("expected the fast path to fire (aliasing frame) for an ANSI-styled frame that fits, but it took the slow (copying) path instead - got %q", a.visible)
+		if a.visible[5] == 'X' {
+			t.Errorf("expected the slow path (a fresh copy) for a frame whose byte length exceeds width even though its display width fits, but visible aliased frame instead - got %q", a.visible)
 		}
 	})
+}
+
+func TestAwareClearerDrawer_Adjust_ToSomeGarbage(t *testing.T) {
+	cases := []struct {
+		frame []byte
+		width int8
+	}{
+		{[]byte("short"), 40},
+		{[]byte("\x1b[32mHi\x1b[0m"), 2},
+		{[]byte("⠋⠙⠹⠸⠼"), 3},
+		{[]byte("\x1b[32mxxxxx\x1b[0m"), 3},
+		{[]byte("hi"), 0},
+		{[]byte{0xff, 0xfe, 0x80}, 5},
+		{[]byte("\x1b["), 5},
+		{nil, 10},
+		{[]byte("a"), -5},
+		{[]byte("\x1bY"), -127},
+		{[]byte("\x9800000000000000\xf6\x9c00000\f0\xe3\xbb000\x02000000000\a0\x0400000000000"), 42},
+		{[]byte("\x1bX\x1a"), -92},
+		{[]byte("00\x89\xdb"), 3},
+		{[]byte("\x1b00000"), 2},
+		{[]byte("\x1b[0\x1b"), 1},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%q/width=%d", c.frame, c.width), func(t *testing.T) {
+			a := &awareClearerDrawer{width: int(c.width)}
+			st := &spinnerState{frame: c.frame}
+
+			a.adjust(st)
+
+			budget := max(int(c.width), 0)
+			if got := visibleWidth(a.visible); got > budget {
+				t.Fatalf("adjust produced visible content %q with display width %d, exceeding the %d-column budget (frame %q, width %d)",
+					a.visible, got, budget, c.frame, c.width)
+			}
+		})
+	}
+}
+
+func visibleWidth(b []byte) int {
+	return graphemeOpts.Bytes(b)
 }

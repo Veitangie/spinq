@@ -48,6 +48,27 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Test
+        run: go test . -race
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build everything (library, examples, internal)
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test . -race
+
   lint:
     runs-on: ubuntu-latest
     steps:

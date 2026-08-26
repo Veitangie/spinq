@@ -211,6 +211,8 @@ func TestHex_InvalidInput(t *testing.T) {
 		"GGGGGG",
 		"ZZZ",
 		"#12345g",
+		"00GG00",
+		"0000GG",
 	} {
 		t.Run(hex, func(t *testing.T) {
 			if _, err := Hex(hex); err == nil {

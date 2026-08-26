@@ -10,12 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"golang.org/x/sync/singleflight"
 )
 
 // ErrClosed is returned by any SpinqWriter method called after the Pair has
@@ -26,10 +23,29 @@ var ErrClosed error = errors.New("spinner closed")
 // Start never returns it to the caller - it's translated to nil.
 var ErrAlreadyRunning error = errors.New("spinner already running")
 
+// Panic is the error reported on Err() when a FrameFunc call panics - the
+// actor recovers it, so a panic never crashes the process or propagates to
+// a caller. See Value for the original recovered value.
+type Panic struct {
+	underlying any
+}
+
+// Error renders the panic's recovered value via fmt.Sprint, satisfying the
+// error interface.
+func (p Panic) Error() string {
+	return fmt.Sprint(p.underlying)
+}
+
+// Value returns the original value passed to panic(), unwrapped - useful
+// when it's a specific error or type the caller wants to inspect rather
+// than just render as a string via Error.
+func (p Panic) Value() any {
+	return p.underlying
+}
+
 type spinnerState struct {
 	wrapped io.Writer
 	ticker  <-chan time.Time
-	sg      *singleflight.Group
 	wg      *sync.WaitGroup
 	errCh   chan<- error
 	cd      clearerDrawer
@@ -43,6 +59,7 @@ type spinnerState struct {
 	getFrame FrameFunc
 	running  *atomic.Bool
 	revision uint64
+	inFlight bool
 
 	writerMut *sync.Mutex
 	needClear bool
@@ -74,7 +91,6 @@ func (st *spinnerState) set(frame []byte) error {
 	}
 
 	st.frame = frame
-	st.revision += 1
 	st.cd.adjust(st)
 	err = st.draw()
 	if err != nil {
@@ -163,33 +179,20 @@ func (st *spinnerState) setGetFrame(getFrame FrameFunc) error {
 	}
 }
 
-func (st *spinnerState) safeGetFrame(getFrame FrameFunc, revision uint64) ([]byte, error) {
-	select {
-	case res := <-st.sg.DoChan(strconv.FormatUint(revision, 16), recoverOnPanic(getFrame)):
-		if res.Err != nil {
-			return []byte{}, res.Err
+func (st *spinnerState) safeGetFrame(getFrame FrameFunc) (res []byte, err error) {
+	defer func() {
+		maybePanic := recover()
+		if maybePanic != nil {
+			fireEvent[error](Panic{maybePanic}, st.errCh)
+			res = []byte{}
+			err = ErrNoFrame
 		}
-		if typed, ok := res.Val.([]byte); ok {
-			return typed, nil
-		}
-		return []byte{}, ErrNoFrame
+	}()
 
-	case <-st.ctx.Done():
-		return nil, ErrClosed
-	}
+	res, err = getFrame()
+	return
 }
 
-func recoverOnPanic(underlying func() ([]byte, error)) func() (any, error) {
-	return func() (res any, err error) {
-		defer func() {
-			maybePanic := recover()
-			if maybePanic != nil {
-				res = []byte{}
-				err = fmt.Errorf("%v", maybePanic)
-			}
-		}()
-
-		res, err = underlying()
-		return
-	}
+func (st *spinnerState) safeGetFrameFunc(getFrame FrameFunc) FrameFunc {
+	return func() ([]byte, error) { return st.safeGetFrame(getFrame) }
 }

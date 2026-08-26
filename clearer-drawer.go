@@ -8,10 +8,13 @@ import (
 	"bytes"
 
 	"github.com/clipperhouse/displaywidth"
-	"github.com/clipperhouse/uax29/v2/graphemes"
 )
 
 const lineUp = "\033[A"
+
+var graphemeOpts = displaywidth.Options{
+	ControlSequences: true,
+}
 
 var clearPrevLine = append([]byte(lineUp), ClearLineBytes...)
 
@@ -106,7 +109,7 @@ func (a *awareClearerDrawer) clearMess(st *spinnerState) error {
 		return nil
 	}
 
-	linesToClear := max((displaywidth.Bytes(StripANSIBytes(a.visible))+a.width-1)/a.width, 1)
+	linesToClear := max((graphemeOpts.Bytes(a.visible)+a.width-1)/a.width, 1)
 	totalSeq := bytes.Buffer{}
 	for curLine := range linesToClear {
 		if curLine == 0 {
@@ -122,20 +125,20 @@ func (a *awareClearerDrawer) clearMess(st *spinnerState) error {
 
 // NOT THREAD SAFE
 func (a *awareClearerDrawer) adjust(st *spinnerState) {
-	if a.width >= len(st.frame) || a.width >= displaywidth.Bytes(StripANSIBytes(st.frame)) {
+	if a.width >= len(st.frame) {
 		a.visible = st.frame
 		return
 	}
 
-	iter := graphemes.FromBytes(st.frame)
-	iter.AnsiEscapeSequences = true
-	iter.AnsiEscapeSequences8Bit = true
+	iter := graphemeOpts.BytesGraphemes(st.frame)
 	total := 0
 	canTakeMore := true
 	result := bytes.Buffer{}
 	for iter.Next() {
+		size := iter.Width()
 		cur := iter.Value()
-		if len(cur) == 0 || cur[0] == 0o33 {
+
+		if size == 0 {
 			result.Write(cur)
 			continue
 		}
@@ -143,7 +146,6 @@ func (a *awareClearerDrawer) adjust(st *spinnerState) {
 			continue
 		}
 
-		size := displaywidth.Bytes(cur)
 		if total+size <= a.width {
 			total += size
 			result.Write(cur)

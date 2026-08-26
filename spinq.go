@@ -151,7 +151,8 @@ func WithDivider(div string) JustStartOptionsFunc {
 // already-cheap source (typically CachedGetWidth's output), shaped with
 // Offset/Portion/Clamp as needed. See WithDefaultResizeDetection/
 // DefaultResizeDetection for zero-configuration sources. A nil getWidth
-// is a no-op, leaving resize detection off.
+// is a no-op, leaving resize detection off. A panicking getWidth never
+// crashes the process, reporting 0 for that call instead.
 func WithResizeDetection(getWidth func() int) JustStartOptionsFunc {
 	if getWidth == nil {
 		return noop()

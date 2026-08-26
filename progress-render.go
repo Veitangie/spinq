@@ -8,8 +8,6 @@ import (
 	"bytes"
 	"math"
 	"strconv"
-
-	"github.com/clipperhouse/displaywidth"
 )
 
 // RenderFunc renders a progress bar/counter from a (current, total)
@@ -387,21 +385,21 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	divLength := displaywidth.String(StripANSI(opt.Dividers[0]))
+	divLength := graphemeOpts.String(opt.Dividers[0])
 	for _, div := range opt.Dividers[1:] {
-		if divLength != displaywidth.String(StripANSI(div)) {
+		if divLength != graphemeOpts.String(div) {
 			return NoopRender()
 		}
 	}
-	constPartLength := displaywidth.String(StripANSI(opt.Start)) +
-		displaywidth.String(StripANSI(opt.End))
+	constPartLength := graphemeOpts.String(opt.Start) +
+		graphemeOpts.String(opt.End)
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := displaywidth.String(StripANSI(opt.Empty))
-	if unitLength != displaywidth.String(StripANSI(opt.Full)) || unitLength != divLength || unitLength > length {
+	unitLength := graphemeOpts.String(opt.Empty)
+	if unitLength != graphemeOpts.String(opt.Full) || unitLength != divLength || unitLength > length {
 		return NoopRender()
 	}
 
@@ -461,16 +459,16 @@ func BarRender(length int, opts ...BarOptionsFunc) RenderFunc {
 		opt.Full, opt.Empty = opt.Empty, opt.Full
 	}
 
-	constPartLength := displaywidth.String(StripANSI(opt.Start)) +
-		displaywidth.String(StripANSI(opt.Divider)) +
-		displaywidth.String(StripANSI(opt.End))
+	constPartLength := graphemeOpts.String(opt.Start) +
+		graphemeOpts.String(opt.Divider) +
+		graphemeOpts.String(opt.End)
 	length -= constPartLength
 	if length <= 0 {
 		return NoopRender()
 	}
 
-	unitLength := displaywidth.String(StripANSI(opt.Empty))
-	if unitLength != displaywidth.String(StripANSI(opt.Full)) || unitLength > length {
+	unitLength := graphemeOpts.String(opt.Empty)
+	if unitLength != graphemeOpts.String(opt.Full) || unitLength > length {
 		return NoopRender()
 	}
 
@@ -562,7 +560,7 @@ func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
 		return NoopRender()
 	}
 
-	width := getWidth()
+	width := zeroOnPanic(getWidth)()
 	currentRender := build(width)
 
 	return func(current, total int) []byte {

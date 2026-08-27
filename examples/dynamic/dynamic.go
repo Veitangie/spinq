@@ -27,7 +27,7 @@ func main() {
 	const total = 1000
 	var count atomic.Int64
 	render := spinq.JoinRender(" ",
-		spinq.DynamicBarRender(barWidth, spinq.WithThinBarOptions()),
+		spinq.DynamicBarRender(barWidth, spinq.BarWithThinPreset()),
 		spinq.FractRender("/"),
 		spinq.PercentRender(),
 	)

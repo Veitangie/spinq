@@ -72,7 +72,7 @@ func SigwinchFromOS(in <-chan os.Signal) <-chan struct{} {
 // SIGWINCH via DefaultSigwinch. A nil ctx defaults to context.Background().
 // Returns an error whenever os.Stderr isn't a real terminal, which all four
 // callers turn into a safe fallback rather than propagating.
-func DefaultGetWidth(ctx context.Context) (func() int, error) {
+func DefaultGetWidth(ctx context.Context) (WidthFunc, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

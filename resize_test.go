@@ -135,12 +135,16 @@ func TestSigwinchFromPoller_FiresPeriodicallyAndClosesOnCancel(t *testing.T) {
 	drainUntilClosed(t, sigwinch, 2*time.Second)
 }
 
-func TestSigwinchFromPoller_NonPositiveDurationReturnsNil(t *testing.T) {
-	if got := SigwinchFromPoller(context.Background(), 0); got != nil {
-		t.Errorf("expected a zero duration to return nil, got %v", got)
+func TestSigwinchFromPoller_NonPositiveDurationReturnsAlreadyClosedChannel(t *testing.T) {
+	if got := SigwinchFromPoller(context.Background(), 0); got == nil {
+		t.Error("expected a zero duration to return a non-nil channel")
+	} else {
+		drainUntilClosed(t, got, 2*time.Second)
 	}
-	if got := SigwinchFromPoller(context.Background(), -time.Millisecond); got != nil {
-		t.Errorf("expected a negative duration to return nil, got %v", got)
+	if got := SigwinchFromPoller(context.Background(), -time.Millisecond); got == nil {
+		t.Error("expected a negative duration to return a non-nil channel")
+	} else {
+		drainUntilClosed(t, got, 2*time.Second)
 	}
 }
 

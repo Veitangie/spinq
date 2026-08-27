@@ -19,7 +19,7 @@ import (
 // WithDefaultResizeDetection, WrapWithDefaultResizeDetection, and
 // DefaultResizeDetection/WrapDefaultResizeDetection all back to a safe
 // fallback) whenever os.Stderr isn't a real console.
-func DefaultGetWidth(ctx context.Context) (func() int, error) {
+func DefaultGetWidth(ctx context.Context) (WidthFunc, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

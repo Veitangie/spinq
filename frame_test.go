@@ -188,6 +188,37 @@ func TestDuration_NilTimerReturnsNoop(t *testing.T) {
 	}
 }
 
+func TestDefaultDurationFormat_RendersSecondsWithOneDecimal(t *testing.T) {
+	format := DefaultDurationFormat()
+
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0.0s"},
+		{2300 * time.Millisecond, "2.3s"},
+		{10 * time.Second, "10.0s"},
+	} {
+		if got := format(tc.d); got != tc.want {
+			t.Errorf("format(%v): got %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestDefaultDurationOptions_FieldsAreSane(t *testing.T) {
+	opt := DefaultDurationOptions()
+
+	if opt.StartAt != nil {
+		t.Errorf("expected a nil default StartAt (captured lazily on first call), got %v", opt.StartAt)
+	}
+	if opt.Format == nil {
+		t.Fatal("expected a non-nil default Format")
+	}
+	if got, want := opt.Format(2300*time.Millisecond), "2.3s"; got != want {
+		t.Errorf("expected default Format to match DefaultDurationFormat, got %q, want %q", got, want)
+	}
+}
+
 func TestDuration_DefaultFormatMeasuresFromFirstCall(t *testing.T) {
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := base

@@ -32,20 +32,24 @@ import (
 //   - Close stops the spinner, clears its display, and waits for the
 //     actor to fully exit, including any FrameFunc call still in flight.
 //     Never closes the underlying wrapped io.Writer, even if it
-//     implements io.Closer. Every lifecycle method called after Close
-//     returns ErrClosed. Doesn't guarantee every goroutine spinq ever
-//     spawned has exited yet - a couple of short-lived internal ones are
-//     cancelled, not joined.
+//     implements io.Closer. Start/Stop/StopWith/StopNoClear/Set all
+//     return ErrClosed once called after Close. Close itself is
+//     idempotent - a second call is a no-op returning nil, same as the
+//     first. Doesn't guarantee every goroutine spinq ever spawned has
+//     exited yet - a couple of short-lived internal ones are cancelled,
+//     not joined.
 //   - Err returns a channel of errors not otherwise reportable
 //     synchronously: a write failure during a ticker redraw or Close's
-//     final clear, or a Panic when a FrameFunc call panics. Best-effort
-//     delivery; closes once the writer is fully shut down. Only a write
-//     failure auto-stops the spinner - a Panic just skips that frame.
+//     final clear, or a PanicError when a FrameFunc call panics. Best-effort
+//     delivery; closes once the writer is fully shut down (including after
+//     Close - ranging over it is safe unconditionally). Only a write
+//     failure auto-stops the spinner - a PanicError just skips that frame.
 //   - IsReal reports whether this writer is backed by a live spinner
-//     actor (true) or is a no-op passthrough (false).
+//     actor (true) or is a no-op passthrough (false) - true forever, even
+//     after Close.
 //   - GetWidth returns the getWidth func this writer uses to size its own
 //     rendering. Never nil: -1 means resize detection isn't configured -
-//     safe to call GetWidth()() with no nil check.
+//     safe to call GetWidth()() with no nil check, before or after Close.
 //
 // Two implementations exist: an unexported one backed by a live spinner
 // actor, and WriterPassthrough, used whenever WrapFilePair/WrapOS/
@@ -59,7 +63,7 @@ type Writer interface {
 	StopNoClear(string) error
 	Set(FrameFunc) error
 	IsReal() bool
-	GetWidth() func() int
+	GetWidth() WidthFunc
 	Err() <-chan error
 }
 
@@ -87,7 +91,7 @@ func (sw WriterPassthrough) Set(_ FrameFunc) error { return nil }
 
 func (sw WriterPassthrough) IsReal() bool { return false }
 
-func (sw WriterPassthrough) GetWidth() func() int { return func() int { return -1 } }
+func (sw WriterPassthrough) GetWidth() WidthFunc { return func() int { return -1 } }
 
 func (sw WriterPassthrough) Close() error { return nil }
 
@@ -100,7 +104,7 @@ func (sw WriterPassthrough) Err() <-chan error {
 type writerReal struct {
 	st       *spinnerState
 	wrapped  io.Writer
-	getWidth func() int
+	getWidth WidthFunc
 	errCh    <-chan error
 }
 
@@ -153,7 +157,7 @@ func (sw writerReal) Set(getFrame FrameFunc) error {
 
 func (sw writerReal) IsReal() bool { return true }
 
-func (sw writerReal) GetWidth() func() int { return sw.getWidth }
+func (sw writerReal) GetWidth() WidthFunc { return sw.getWidth }
 
 func (sw writerReal) Close() error {
 	sw.st.close()

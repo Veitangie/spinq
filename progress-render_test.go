@@ -100,7 +100,7 @@ func TestBarRender_FullWidthMatchesOtherLevels(t *testing.T) {
 
 func TestBarRender_CustomOptions(t *testing.T) {
 	opts := BarOptions{Start: "<", Full: "#", Divider: "|", Empty: ".", End: ">"}
-	got := BarRender(10, WithBarOptions(opts))(5, 10)
+	got := BarRender(10, BarWithOptions(opts))(5, 10)
 	if string(got) != "<###|....>" {
 		t.Errorf("expected %q, got %q", "<###|....>", got)
 	}
@@ -108,7 +108,7 @@ func TestBarRender_CustomOptions(t *testing.T) {
 
 func TestBarRender_NilOptionsFuncInSliceIsSkippedWithoutPanic(t *testing.T) {
 	opts := BarOptions{Start: "<", Full: "#", Divider: "|", Empty: ".", End: ">"}
-	got := BarRender(10, nil, WithBarOptions(opts), nil)(5, 10)
+	got := BarRender(10, nil, BarWithOptions(opts), nil)(5, 10)
 	if string(got) != "<###|....>" {
 		t.Errorf("expected a nil BarOptionsFunc to be skipped and the real option after it still applied, got %q", got)
 	}
@@ -123,7 +123,7 @@ func TestBarRender_LengthTooSmallReturnsNoop(t *testing.T) {
 
 func TestBarRender_MismatchedUnitWidthsReturnsNoop(t *testing.T) {
 	opts := BarOptions{Start: "[", Full: "==", Divider: ">", Empty: " ", End: "]"}
-	got := BarRender(10, WithBarOptions(opts))(5, 10)
+	got := BarRender(10, BarWithOptions(opts))(5, 10)
 	if len(got) != 0 {
 		t.Errorf("expected no bytes when Full and Empty have different widths, got %q", got)
 	}
@@ -141,7 +141,7 @@ func TestBarRender_ExactlyOneUnitOfRoomStillRenders(t *testing.T) {
 
 func TestBarRender_RendersCorrectlyWithMultiColumnUnits(t *testing.T) {
 	opts := BarOptions{Start: "", Full: "##", Divider: ">>", Empty: "  ", End: ""}
-	got := BarRender(22, WithBarOptions(opts))(5, 10)
+	got := BarRender(22, BarWithOptions(opts))(5, 10)
 	if len(got) != 22 {
 		t.Errorf("expected total rendered length 22, got %d from %q", len(got), got)
 	}
@@ -161,12 +161,12 @@ func TestBarRender_DirectionLeftMirrorsRight(t *testing.T) {
 		{9, 10, "[======> ]", "[ >======]"},
 		{10, 10, "[=======>]", "[>=======]"},
 	} {
-		gotRight := BarRender(10, WithBarOptions(opts(Right)))(tc.current, tc.total)
+		gotRight := BarRender(10, BarWithOptions(opts(Right)))(tc.current, tc.total)
 		if string(gotRight) != tc.wantRight {
 			t.Errorf("current=%d total=%d Right: expected %q, got %q", tc.current, tc.total, tc.wantRight, gotRight)
 		}
 
-		gotLeft := BarRender(10, WithBarOptions(opts(Left)))(tc.current, tc.total)
+		gotLeft := BarRender(10, BarWithOptions(opts(Left)))(tc.current, tc.total)
 		if string(gotLeft) != tc.wantLeft {
 			t.Errorf("current=%d total=%d Left: expected %q, got %q", tc.current, tc.total, tc.wantLeft, gotLeft)
 		}
@@ -229,11 +229,11 @@ func TestBarOptionsPresets(t *testing.T) {
 		opts BarOptionsFunc
 		want string
 	}{
-		{"Rounded", WithRoundedBarOptions(), "(###>------)"},
-		{"Shade", WithShadeBarOptions(), "█████       "},
-		{"Dot", WithDotBarOptions(), "(●●●●○○○○○○)"},
-		{"Minimal", WithMinimalBarOptions(), "####>-------"},
-		{"Thin", WithThinBarOptions(), "▰▰▰▰▰▱▱▱▱▱▱▱"},
+		{"Rounded", BarWithRoundedPreset(), "(###>------)"},
+		{"Shade", BarWithShadePreset(), "█████       "},
+		{"Dot", BarWithDotPreset(), "(●●●●○○○○○○)"},
+		{"Minimal", BarWithMinimalPreset(), "####>-------"},
+		{"Thin", BarWithThinPreset(), "▰▰▰▰▰▱▱▱▱▱▱▱"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := BarRender(12, tc.opts)(4, 10)
@@ -250,11 +250,11 @@ func TestSmoothBarOptionsPresets(t *testing.T) {
 		opts SmoothBarOptionsFunc
 		want string
 	}{
-		{"Snake", WithSnakeSmoothOptions(), "⠿⠿⠿⠿⠧       "},
-		{"Braille", WithBrailleSmoothOptions(), "⠿⠿⠿⠿⠏       "},
-		{"Pie", WithPieSmoothOptions(), "(●●●●○○○○○○)"},
-		{"Dot", WithDotSmoothOptions(), "(●●●●○○○○○○)"},
-		{"Shade", WithShadeSmoothOptions(), "████▓       "},
+		{"Snake", SmoothWithSnakePreset(), "⠿⠿⠿⠿⠧       "},
+		{"Braille", SmoothWithBraillePreset(), "⠿⠿⠿⠿⠏       "},
+		{"Pie", SmoothWithPiePreset(), "(●●●●○○○○○○)"},
+		{"Dot", SmoothWithDotPreset(), "(●●●●○○○○○○)"},
+		{"Shade", SmoothWithShadePreset(), "████▓       "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := SmoothBarRender(12, tc.opts)(4, 10)
@@ -371,10 +371,13 @@ func TestSmoothBarRender_LengthTooSmallReturnsNoop(t *testing.T) {
 	}
 }
 
-func TestSmoothBarRender_OneDividerFallsBackToPlainBarWithThatDivider(t *testing.T) {
+func TestSmoothBarRender_OneDividerFallsBackToPlainBarWithNoDivider(t *testing.T) {
 	got := SmoothBarRender(10, SmoothWithDivider([]string{"X"}))(5, 10)
-	if !strings.Contains(string(got), "X") {
-		t.Errorf("expected the single divider to appear, got %q", got)
+	if strings.Contains(string(got), "X") {
+		t.Errorf("expected the single divider to be ignored (same as zero dividers), but it appeared: %q", got)
+	}
+	if string(got) != "█████     " {
+		t.Errorf("expected a plain bar with no divider character, got %q", got)
 	}
 }
 
@@ -474,7 +477,7 @@ func TestSmoothWithOptions_ReplacesWholeStruct(t *testing.T) {
 		Direction: Right,
 	}
 
-	opt = WithSmoothOptions(replacement)(opt)
+	opt = SmoothWithOptions(replacement)(opt)
 
 	if opt.Start != replacement.Start {
 		t.Errorf("expected SmoothWithOptions to fully replace the struct; got Start=%q, want %q (the earlier SmoothWithStart value should be gone)", opt.Start, replacement.Start)
@@ -606,9 +609,9 @@ func TestDynamicRender_PropagatesBuildPanicFree(t *testing.T) {
 
 func TestDynamicBarRender_BuildsAtGivenWidth(t *testing.T) {
 	opts := BarOptions{Start: "[", Full: "=", Divider: ">", Empty: " ", End: "]"}
-	r := DynamicBarRender(func() int { return 40 }, WithBarOptions(opts))
+	r := DynamicBarRender(func() int { return 40 }, BarWithOptions(opts))
 
-	want := BarRender(40, WithBarOptions(opts))(5, 10)
+	want := BarRender(40, BarWithOptions(opts))(5, 10)
 	got := r(5, 10)
 	if string(got) != string(want) {
 		t.Errorf("expected DynamicBarRender(width=40) to match BarRender(40, ...), got %q want %q", got, want)
@@ -617,9 +620,9 @@ func TestDynamicBarRender_BuildsAtGivenWidth(t *testing.T) {
 
 func TestDynamicBarRender_ComposesWithPortion(t *testing.T) {
 	opts := BarOptions{Start: "[", Full: "=", Divider: ">", Empty: " ", End: "]"}
-	r := DynamicBarRender(Portion(func() int { return 80 }, 0.5), WithBarOptions(opts))
+	r := DynamicBarRender(Portion(func() int { return 80 }, 0.5), BarWithOptions(opts))
 
-	want := BarRender(40, WithBarOptions(opts))(5, 10)
+	want := BarRender(40, BarWithOptions(opts))(5, 10)
 	got := r(5, 10)
 	if string(got) != string(want) {
 		t.Errorf("expected DynamicBarRender(Portion(width=80, 0.5)) to match BarRender(40, ...), got %q want %q", got, want)

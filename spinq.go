@@ -38,19 +38,22 @@ type JustStartOptions struct {
 	States       []string
 	Text         string
 	Divider      string
-	GetWidth     func() int
+	GetWidth     WidthFunc
 }
 
-// JustStartOptionsFunc configures a JustStartOptions value.
+// JustStartOptionsFunc configures a JustStartOptions value. Unlike
+// WrapOptionsFunc's Wrap-prefixed constructors, these stay unprefixed -
+// JustStart is spinq's default entry point, so its own options get the
+// bare name.
 type JustStartOptionsFunc func(JustStartOptions) JustStartOptions
 
 func noop() JustStartOptionsFunc {
 	return func(jso JustStartOptions) JustStartOptions { return jso }
 }
 
-// WithJustStartOptions replaces the entire JustStartOptions with opt,
+// WithOptions replaces the entire JustStartOptions with opt,
 // discarding any options applied earlier in the same JustStart call.
-func WithJustStartOptions(opt JustStartOptions) JustStartOptionsFunc {
+func WithOptions(opt JustStartOptions) JustStartOptionsFunc {
 	return func(jso JustStartOptions) JustStartOptions { return opt }
 }
 
@@ -153,7 +156,7 @@ func WithDivider(div string) JustStartOptionsFunc {
 // DefaultResizeDetection for zero-configuration sources. A nil getWidth
 // is a no-op, leaving resize detection off. A panicking getWidth never
 // crashes the process, reporting 0 for that call instead.
-func WithResizeDetection(getWidth func() int) JustStartOptionsFunc {
+func WithResizeDetection(getWidth WidthFunc) JustStartOptionsFunc {
 	if getWidth == nil {
 		return noop()
 	}

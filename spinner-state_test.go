@@ -8,16 +8,16 @@ import (
 	"testing"
 )
 
-func TestPanic_ErrorRendersRecoveredValue(t *testing.T) {
-	p := Panic{underlying: "boom"}
+func TestPanicError_ErrorRendersRecoveredValue(t *testing.T) {
+	p := PanicError{underlying: "boom"}
 	if got := p.Error(); got != "boom" {
 		t.Errorf("expected Error() to render the recovered value, got %q", got)
 	}
 }
 
-func TestPanic_ValueReturnsOriginalRecoveredValue(t *testing.T) {
+func TestPanicError_ValueReturnsOriginalRecoveredValue(t *testing.T) {
 	original := errors.New("boom")
-	p := Panic{underlying: original}
+	p := PanicError{underlying: original}
 
 	if got := p.Value(); got != any(original) {
 		t.Errorf("expected Value() to return the original recovered value unwrapped, got %v", got)
@@ -42,12 +42,12 @@ func TestSafeGetFrame_RecoversPanicAndReportsItOnErrCh(t *testing.T) {
 
 	select {
 	case gotErr := <-errCh:
-		var p Panic
+		var p PanicError
 		if !errors.As(gotErr, &p) {
-			t.Fatalf("expected a Panic error on errCh, got %v (%T)", gotErr, gotErr)
+			t.Fatalf("expected a PanicError on errCh, got %v (%T)", gotErr, gotErr)
 		}
 		if p.Value() != "boom: deliberate panic" {
-			t.Errorf("expected Panic.Value() to carry the original recovered value, got %v", p.Value())
+			t.Errorf("expected PanicError.Value() to carry the original recovered value, got %v", p.Value())
 		}
 	default:
 		t.Fatal("expected the panic to already be buffered on errCh")

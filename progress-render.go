@@ -138,14 +138,14 @@ func SmoothWithFull(full string) SmoothBarOptionsFunc {
 // SmoothWithDivider sets the ordered set of sub-cell glyphs used at the
 // boundary between filled and empty, from emptiest to fullest. All of them,
 // plus Full and Empty, must render at the same width, or SmoothBarRender
-// returns NoopRender. Fewer than two dividers falls back to BarRender: zero
-// dividers uses BarRender's own default divider, one divider is used as
-// BarRender's fixed divider.
+// returns NoopRender. Fewer than two dividers falls back to BarRender with
+// no divider glyph at all (a plain Full/Empty bar) - a single divider
+// wouldn't give any sub-cell precision anyway.
 //
 // dividers[0] should equal Empty and the last entry should not equal Full:
 // SmoothBarRender always shows a divider at exactly 0%, but never at
 // exactly 100%, so those are the only two entries that can make an
-// in-progress cell falsely render as truly empty or truly full.
+// in-progress cell falsely render as not-quite empty or completely full.
 func SmoothWithDivider(dividers []string) SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		bo.Dividers = dividers
@@ -178,22 +178,21 @@ func SmoothWithDirection(direction RenderDirection) SmoothBarOptionsFunc {
 	}
 }
 
-// WithSmoothOptions replaces the entire SmoothBarOptions with opt,
+// SmoothWithOptions replaces the entire SmoothBarOptions with opt,
 // discarding any options applied earlier in the same SmoothBarRender call.
-func WithSmoothOptions(opt SmoothBarOptions) SmoothBarOptionsFunc {
+// Every SmoothWith*Preset below does the same - apply it before other
+// SmoothWith* tweaks in the same call, not after, or they're discarded.
+func SmoothWithOptions(opt SmoothBarOptions) SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return opt
 	}
 }
 
-// WithSnakeSmoothOptions returns a preset SmoothBarOptions styled as
-// "⠿⠧⠁", with no brackets, blank empty cells, and the boundary divider
-// snaking around a Braille cell's perimeter (⠁⠃⠇⠧⠷). See
-// WithBrailleSmoothOptions for the same idea filling column by column
-// instead. Like WithSmoothOptions, it replaces the whole SmoothBarOptions
-// - apply it before any SmoothWith* tweaks in the same SmoothBarRender
-// call, not after, or it discards them.
-func WithSnakeSmoothOptions() SmoothBarOptionsFunc {
+// SmoothWithSnakePreset returns a preset SmoothBarOptions styled as
+// "⠿⠧ ": no brackets, blank empty cells, boundary divider snaking around
+// a Braille cell's perimeter (⠁⠃⠇⠧⠷). See SmoothWithBraillePreset for the
+// same idea filling column by column instead.
+func SmoothWithSnakePreset() SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return SmoothBarOptions{
 			Start:     "",
@@ -206,15 +205,12 @@ func WithSnakeSmoothOptions() SmoothBarOptionsFunc {
 	}
 }
 
-// WithBrailleSmoothOptions returns a preset SmoothBarOptions styled as
-// "⠿⠟⠁", with no brackets, blank empty cells, and the boundary divider
-// filling a Braille cell column by column, left then right (⠁⠃⠇⠏⠟) - the
-// order a Braille cell is naturally read in, unlike
-// WithSnakeSmoothOptions' perimeter order. Like WithSmoothOptions, it
-// replaces the whole SmoothBarOptions - apply it before any SmoothWith*
-// tweaks in the same SmoothBarRender call, not after, or it discards
-// them.
-func WithBrailleSmoothOptions() SmoothBarOptionsFunc {
+// SmoothWithBraillePreset returns a preset SmoothBarOptions styled as
+// "⠿⠏ ": no brackets, blank empty cells, boundary divider filling a
+// Braille cell column by column, left then right (⠁⠃⠇⠏⠟) - the order a
+// Braille cell is naturally read in, unlike SmoothWithSnakePreset's
+// perimeter order.
+func SmoothWithBraillePreset() SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return SmoothBarOptions{
 			Start:     "",
@@ -227,15 +223,12 @@ func WithBrailleSmoothOptions() SmoothBarOptionsFunc {
 	}
 }
 
-// WithPieSmoothOptions returns a preset SmoothBarOptions styled as
-// "●◕○", using a filling-circle boundary divider (○◔◑◕). The quarter-circle
-// glyphs (◔◕) are font-dependent - some fonts render them inconsistently
-// with the rest - so use at your own discretion; WithDotSmoothOptions is
-// the same idea restricted to glyphs with much more consistent font
-// support. Like WithSmoothOptions, it replaces the whole SmoothBarOptions
-// - apply it before any SmoothWith* tweaks in the same SmoothBarRender
-// call, not after, or it discards them.
-func WithPieSmoothOptions() SmoothBarOptionsFunc {
+// SmoothWithPiePreset returns a preset SmoothBarOptions styled as "●◕○",
+// using a filling-circle boundary divider (○◔◑◕). The quarter-circle
+// glyphs (◔◕) render inconsistently in some fonts - use at your own
+// discretion; SmoothWithDotPreset is the same idea restricted to glyphs
+// with much more consistent font support.
+func SmoothWithPiePreset() SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return SmoothBarOptions{
 			Start:     "(",
@@ -248,14 +241,11 @@ func WithPieSmoothOptions() SmoothBarOptionsFunc {
 	}
 }
 
-// WithDotSmoothOptions returns a preset SmoothBarOptions styled as
-// "●◐○", using a filling-circle boundary divider (○◐) - WithPieSmoothOptions
-// with only the half-circle step, skipping the quarter-circle glyphs
-// (◔◕) that render inconsistently in some fonts. Like WithSmoothOptions,
-// it replaces the whole SmoothBarOptions - apply it before any
-// SmoothWith* tweaks in the same SmoothBarRender call, not after, or it
-// discards them.
-func WithDotSmoothOptions() SmoothBarOptionsFunc {
+// SmoothWithDotPreset returns a preset SmoothBarOptions styled as "●◐○",
+// using a filling-circle boundary divider (○◐) - SmoothWithPiePreset with
+// only the half-circle step, skipping the quarter-circle glyphs (◔◕) that
+// render inconsistently in some fonts.
+func SmoothWithDotPreset() SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return SmoothBarOptions{
 			Start:     "(",
@@ -268,12 +258,10 @@ func WithDotSmoothOptions() SmoothBarOptionsFunc {
 	}
 }
 
-// WithShadeSmoothOptions returns a preset SmoothBarOptions styled as
-// "██▓  ", with no brackets, blank empty cells, and the boundary divider
-// deepening through ░▒▓. Like WithSmoothOptions, it replaces the whole
-// SmoothBarOptions - apply it before any SmoothWith* tweaks in the same
-// SmoothBarRender call, not after, or it discards them.
-func WithShadeSmoothOptions() SmoothBarOptionsFunc {
+// SmoothWithShadePreset returns a preset SmoothBarOptions styled as
+// "██▓  ": no brackets, blank empty cells, boundary divider deepening
+// through ░▒▓.
+func SmoothWithShadePreset() SmoothBarOptionsFunc {
 	return func(bo SmoothBarOptions) SmoothBarOptions {
 		return SmoothBarOptions{
 			Start:     "",
@@ -305,92 +293,6 @@ func DefaultBarOptions() BarOptions {
 		Empty:     " ",
 		End:       "]",
 		Direction: Right,
-	}
-}
-
-// WithRoundedBarOptions returns a preset BarOptions styled as "(###>----)".
-// Like WithBarOptions, it replaces the whole BarOptions - apply it before
-// any BarWith* tweaks in the same BarRender call, not after, or it discards
-// them.
-func WithRoundedBarOptions() BarOptionsFunc {
-	return func(bo BarOptions) BarOptions {
-		return BarOptions{
-			Start:     "(",
-			Full:      "#",
-			Divider:   ">",
-			Empty:     "-",
-			End:       ")",
-			Direction: Right,
-		}
-	}
-}
-
-// WithShadeBarOptions returns a preset BarOptions styled as "███   ", using
-// a shaded block character with no brackets and a blank empty background.
-// Like WithBarOptions, it replaces the whole BarOptions - apply it before
-// any BarWith* tweaks in the same BarRender call, not after, or it
-// discards them.
-func WithShadeBarOptions() BarOptionsFunc {
-	return func(bo BarOptions) BarOptions {
-		return BarOptions{
-			Start:     "",
-			Full:      "█",
-			Divider:   "█",
-			Empty:     " ",
-			End:       "",
-			Direction: Right,
-		}
-	}
-}
-
-// WithDotBarOptions returns a preset BarOptions styled as "(●●●○○○)". Like
-// WithBarOptions, it replaces the whole BarOptions - apply it before any
-// BarWith* tweaks in the same BarRender call, not after, or it discards
-// them.
-func WithDotBarOptions() BarOptionsFunc {
-	return func(bo BarOptions) BarOptions {
-		return BarOptions{
-			Start:     "(",
-			Full:      "●",
-			Divider:   "●",
-			Empty:     "○",
-			End:       ")",
-			Direction: Right,
-		}
-	}
-}
-
-// WithMinimalBarOptions returns a preset BarOptions styled as "###>---", with
-// no brackets. Like WithBarOptions, it replaces the whole BarOptions - apply
-// it before any BarWith* tweaks in the same BarRender call, not after, or it
-// discards them.
-func WithMinimalBarOptions() BarOptionsFunc {
-	return func(bo BarOptions) BarOptions {
-		return BarOptions{
-			Start:     "",
-			Full:      "#",
-			Divider:   ">",
-			Empty:     "-",
-			End:       "",
-			Direction: Right,
-		}
-	}
-}
-
-// WithThinBarOptions returns a preset BarOptions styled as "▰▰▰▱▱▱", with no
-// brackets. Like WithBarOptions, it replaces the whole BarOptions - apply it
-// before any BarWith* tweaks in the same BarRender call, not after, or it
-// discards them.
-func WithThinBarOptions() BarOptionsFunc {
-	return func(bo BarOptions) BarOptions {
-		return BarOptions{
-			Start:     "",
-			Full:      "▰",
-			Divider:   "▰",
-			Empty:     "▱",
-			End:       "",
-			Direction: Right,
-		}
 	}
 }
 
@@ -448,11 +350,86 @@ func BarWithDirection(direction RenderDirection) BarOptionsFunc {
 	}
 }
 
-// WithBarOptions replaces the entire BarOptions with opt, discarding any
-// options applied earlier in the same BarRender call.
-func WithBarOptions(opt BarOptions) BarOptionsFunc {
+// BarWithOptions replaces the entire BarOptions with opt, discarding any
+// options applied earlier in the same BarRender call. Every BarWith*Preset
+// below does the same - apply it before other BarWith* tweaks in the same
+// call, not after, or they're discarded.
+func BarWithOptions(opt BarOptions) BarOptionsFunc {
 	return func(bo BarOptions) BarOptions {
 		return opt
+	}
+}
+
+// BarWithRoundedPreset returns a preset BarOptions styled as "(###>----)".
+func BarWithRoundedPreset() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "(",
+			Full:      "#",
+			Divider:   ">",
+			Empty:     "-",
+			End:       ")",
+			Direction: Right,
+		}
+	}
+}
+
+// BarWithShadePreset returns a preset BarOptions styled as "███   ", using
+// a shaded block character with no brackets and a blank empty background.
+func BarWithShadePreset() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "█",
+			Divider:   "█",
+			Empty:     " ",
+			End:       "",
+			Direction: Right,
+		}
+	}
+}
+
+// BarWithDotPreset returns a preset BarOptions styled as "(●●●○○○)".
+func BarWithDotPreset() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "(",
+			Full:      "●",
+			Divider:   "●",
+			Empty:     "○",
+			End:       ")",
+			Direction: Right,
+		}
+	}
+}
+
+// BarWithMinimalPreset returns a preset BarOptions styled as "###>---",
+// with no brackets.
+func BarWithMinimalPreset() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "#",
+			Divider:   ">",
+			Empty:     "-",
+			End:       "",
+			Direction: Right,
+		}
+	}
+}
+
+// BarWithThinPreset returns a preset BarOptions styled as "▰▰▰▱▱▱", with
+// no brackets.
+func BarWithThinPreset() BarOptionsFunc {
+	return func(bo BarOptions) BarOptions {
+		return BarOptions{
+			Start:     "",
+			Full:      "▰",
+			Divider:   "▰",
+			Empty:     "▱",
+			End:       "",
+			Direction: Right,
+		}
 	}
 }
 
@@ -460,9 +437,9 @@ func WithBarOptions(opt BarOptions) BarOptionsFunc {
 // cells wide, using sub-cell-precision divider glyphs (see
 // SmoothWithDivider) at the boundary between filled and empty for smoother
 // visual movement than BarRender's single fixed divider. It renders at a
-// constant width across every progress level, except at exactly 100% (or
-// 0% with Direction: Left), where the boundary divider is dropped in
-// favor of a plain Full/Empty cell.
+// constant width across every progress level. At exactly 100% (in either
+// Direction), the divider is dropped - Full fills every
+// cell. At exactly 0%, the divider is still drawn.
 //
 // It returns NoopRender if length leaves no room for the bar, or if the
 // configured glyphs don't all render at a consistent width.
@@ -481,10 +458,8 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 		optStandard.Empty = opt.Empty
 		optStandard.End = opt.End
 		optStandard.Direction = opt.Direction
-		if len(opt.Dividers) == 1 {
-			optStandard.Divider = opt.Dividers[0]
-		}
-		return BarRender(length, WithBarOptions(optStandard))
+		optStandard.Divider = ""
+		return BarRender(length, BarWithOptions(optStandard))
 	}
 
 	if opt.Direction {
@@ -646,22 +621,21 @@ func PercentRender() RenderFunc {
 	}
 }
 
-// RenderWidthFunc builds a fresh RenderFunc for a given terminal width - see
+// WidthRenderFunc builds a fresh RenderFunc for a given terminal width - see
 // DynamicRender. BarRender/SmoothBarRender's length parameter is usually
-// what a RenderWidthFunc closes over to produce a correctly-sized render.
-type RenderWidthFunc func(int) RenderFunc
+// what a WidthRenderFunc closes over to produce a correctly-sized render.
+type WidthRenderFunc func(int) RenderFunc
 
 // DynamicRender returns a RenderFunc that rebuilds itself via build whenever
-// getWidth's value changes - the RenderFunc-level counterpart to Dynamic. It
-// slots into Progress/JoinRender/RenderFunc.Join exactly like any other
-// RenderFunc, so a width-reactive bar still composes with FractRender,
-// PercentRender, and friends the same way a fixed-width one does.
+// getWidth's value changes - the RenderFunc-level counterpart to Dynamic.
+// Composes with Progress/JoinRender/RenderFunc.Join like any other
+// RenderFunc.
 //
 // getWidth is called on every call to the returned RenderFunc - a hot
-// path. Always pass CachedGetWidth's output here, never a raw
-// syscall-backed getWidth directly; see CachedGetWidth. A nil getWidth or
-// nil build returns NoopRender.
-func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
+// path. Always pass a cached function here, never a raw syscall-backed
+// getWidth directly; see CachedGetWidth. A nil getWidth or nil build returns
+// NoopRender.
+func DynamicRender(getWidth WidthFunc, build WidthRenderFunc) RenderFunc {
 	if getWidth == nil || build == nil {
 		return NoopRender()
 	}
@@ -684,7 +658,7 @@ func DynamicRender(getWidth func() int, build RenderWidthFunc) RenderFunc {
 // pass CachedGetWidth's output, not a raw one; shape it with
 // Offset/Portion/Clamp for a fraction of the terminal, room reserved for
 // fixed-width siblings, or a bounded range.
-func DynamicBarRender(getWidth func() int, opts ...BarOptionsFunc) RenderFunc {
+func DynamicBarRender(getWidth WidthFunc, opts ...BarOptionsFunc) RenderFunc {
 	return DynamicRender(getWidth, func(width int) RenderFunc {
 		return BarRender(width, opts...)
 	})
@@ -692,7 +666,7 @@ func DynamicBarRender(getWidth func() int, opts ...BarOptionsFunc) RenderFunc {
 
 // DynamicSmoothBarRender is SmoothBarRender sized by getWidth instead of a
 // fixed length - see DynamicBarRender.
-func DynamicSmoothBarRender(getWidth func() int, opts ...SmoothBarOptionsFunc) RenderFunc {
+func DynamicSmoothBarRender(getWidth WidthFunc, opts ...SmoothBarOptionsFunc) RenderFunc {
 	return DynamicRender(getWidth, func(width int) RenderFunc {
 		return SmoothBarRender(width, opts...)
 	})

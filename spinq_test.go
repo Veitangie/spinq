@@ -221,14 +221,14 @@ func TestWithResizeDetection_NilGetWidthIsANoop(t *testing.T) {
 	}
 }
 
-func TestWithJustStartOptions_ReplacesWholeStruct(t *testing.T) {
+func TestWithOptions_ReplacesWholeStruct(t *testing.T) {
 	replacement := JustStartOptions{
 		Context: context.WithValue(context.Background(), testCtxKey{}, "replacement"),
 		Frame:   Static("replaced"),
 	}
 
 	opt := WithTicker(make(chan time.Time))(JustStartOptions{})
-	opt = WithJustStartOptions(replacement)(opt)
+	opt = WithOptions(replacement)(opt)
 
 	if opt.Context != replacement.Context {
 		t.Errorf("expected Context to come from the replacement struct")

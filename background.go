@@ -62,7 +62,7 @@ func (st *spinnerState) startBackground() {
 				switch typed := task.(type) {
 				case start:
 					if st.running.Load() {
-						typed.notify <- ErrAlreadyRunning
+						typed.notify <- errAlreadyRunning
 						close(typed.notify)
 						continue
 					}

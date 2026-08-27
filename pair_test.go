@@ -110,6 +110,14 @@ func TestWrapPair_SpinnerFallsBackToMain(t *testing.T) {
 	}
 }
 
+func TestDefaultWrapOptions_FieldsAreSane(t *testing.T) {
+	opt := DefaultWrapOptions()
+
+	if opt.GetWidth != nil {
+		t.Errorf("expected a nil default GetWidth (resize detection off), got %v", opt.GetWidth)
+	}
+}
+
 func TestWrapWithResizeDetection_SetsGetWidth(t *testing.T) {
 	getWidth := func() int { return 42 }
 

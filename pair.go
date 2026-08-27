@@ -44,7 +44,7 @@ func passthroughPair(main, spinner io.Writer) *Pair {
 // and WrapWithResizeDetection. Its zero value (DefaultWrapOptions) leaves
 // resize detection off.
 type WrapOptions struct {
-	GetWidth func() int
+	GetWidth WidthFunc
 }
 
 // WrapOptionsFunc configures a WrapOptions value; see WrapWithResizeDetection.
@@ -65,7 +65,7 @@ func DefaultWrapOptions() WrapOptions {
 // zero-configuration sources. A nil getWidth is a no-op, leaving resize
 // detection off. A panicking getWidth never crashes the process, reporting
 // 0 for that call instead.
-func WrapWithResizeDetection(getWidth func() int) WrapOptionsFunc {
+func WrapWithResizeDetection(getWidth WidthFunc) WrapOptionsFunc {
 	if getWidth == nil {
 		return func(wo WrapOptions) WrapOptions { return wo }
 	}
@@ -193,18 +193,18 @@ func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFun
 
 	colorableMain, colorableSpinner := colorable.NewColorable(main), colorable.NewColorable(spinner)
 
-	inTermErr := isatty.IsTerminal(spinner.Fd()) || isatty.IsCygwinTerminal(spinner.Fd())
-	if !inTermErr {
+	inTermSpinner := isatty.IsTerminal(spinner.Fd()) || isatty.IsCygwinTerminal(spinner.Fd())
+	if !inTermSpinner {
 		return passthroughPair(colorableMain, colorableSpinner), nil
 	}
 
-	inTermOut := isatty.IsTerminal(main.Fd()) || isatty.IsCygwinTerminal(main.Fd())
+	inTermStandard := isatty.IsTerminal(main.Fd()) || isatty.IsCygwinTerminal(main.Fd())
 	res, err := WrapPair(ctx, colorableMain, colorableSpinner, getFrame, ticker, opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	if !inTermOut {
+	if !inTermStandard {
 		res.Standard = WriterPassthrough{colorableMain}
 	}
 	return res, nil

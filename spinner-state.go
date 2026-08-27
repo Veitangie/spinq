@@ -19,29 +19,26 @@ import (
 // called after Close (or its governing context cancellation).
 var ErrClosed error = errors.New("spinner closed")
 
-// ErrAlreadyRunning signals a redundant Start call while already running.
-// Start never returns it to the caller - it's translated to nil.
-var ErrAlreadyRunning error = errors.New("spinner already running")
+var errAlreadyRunning error = errors.New("spinner already running")
 
-// Panic is the error reported on Err() when a FrameFunc call panics - the
-// actor recovers it, so a panic never crashes the process or propagates to
-// a caller, and (unlike a write failure) never stops the spinner either;
-// that one frame is just skipped. See Value for the original recovered
-// value.
-type Panic struct {
+// PanicError is the error reported on Err() when a FrameFunc call panics -
+// recovered by the actor, so it never crashes the process or propagates to
+// a caller, and (unlike a write failure) never stops the spinner; that one
+// frame is just skipped. See Value for the original recovered value.
+type PanicError struct {
 	underlying any
 }
 
 // Error renders the panic's recovered value via fmt.Sprint, satisfying the
 // error interface.
-func (p Panic) Error() string {
+func (p PanicError) Error() string {
 	return fmt.Sprint(p.underlying)
 }
 
 // Value returns the original value passed to panic(), unwrapped - useful
 // when it's a specific error or type the caller wants to inspect rather
 // than just render as a string via Error.
-func (p Panic) Value() any {
+func (p PanicError) Value() any {
 	return p.underlying
 }
 
@@ -125,7 +122,7 @@ func (st *spinnerState) start(ctx context.Context) error {
 				}
 			}()
 		}
-		if errors.Is(err, ErrAlreadyRunning) {
+		if errors.Is(err, errAlreadyRunning) {
 			return nil
 		}
 		return err
@@ -185,7 +182,7 @@ func (st *spinnerState) safeGetFrame(getFrame FrameFunc) (res []byte, err error)
 	defer func() {
 		maybePanic := recover()
 		if maybePanic != nil {
-			fireEvent[error](Panic{maybePanic}, st.errCh)
+			fireEvent[error](PanicError{maybePanic}, st.errCh)
 			res = []byte{}
 			err = ErrNoFrame
 		}

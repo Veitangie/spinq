@@ -52,7 +52,7 @@ func (obliviousClearerDrawer) adjust(*spinnerState) {}
 
 type awareClearerDrawer struct {
 	width    int
-	getWidth func() int
+	getWidth WidthFunc
 	visible  []byte
 }
 

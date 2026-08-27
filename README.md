@@ -146,7 +146,7 @@ func main() {
 	const total = 1000
 	var count atomic.Int64
 	render := spinq.JoinRender(" ",
-		spinq.DynamicBarRender(barWidth, spinq.WithThinBarOptions()),
+		spinq.DynamicBarRender(barWidth, spinq.BarWithThinPreset()),
 		spinq.FractRender("/"),
 		spinq.PercentRender(),
 	)
@@ -188,7 +188,7 @@ All three examples live in [`examples/`](examples/) and run as-is with `go run .
 
 Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
 
-- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq ships five direct dependencies, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) and [`uax29`](https://github.com/clipperhouse/uax29) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. Everything else is standard library.
+- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq imports four packages at runtime, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) (built on [`uax29`](https://github.com/clipperhouse/uax29)'s grapheme-cluster segmentation) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. `go.mod` also lists `creack/pty` as a direct dependency - that's test-only tooling for the PTY-backed test suite, never imported by spinq itself. Everything else is standard library.
 
 - **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinner` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
 
@@ -260,7 +260,7 @@ Requires the Go version declared in `go.mod`.
 
 spinq follows semantic versioning, judged strictly from the calling code's perspective:
 
-- **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior (e.g. what happens if you call a lifecycle method on `Pair.Standard` it was never meant to have), adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
+- **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior (e.g. `SigwinchFromPoller` returning a literal `nil` channel for a non-positive duration - unusable the moment a caller ranges over it - instead of an already-closed one, matching every other degenerate-input case in the package), adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
 - **Minor** - additive: everything that already compiled keeps compiling and behaving the same. A new optional parameter via `...T`, a new method, a new exported function or type.
 - **Major** - anything that breaks compilation for existing callers - a changed signature on an existing exported function or method - or breaks an existing behavioral contract even without a signature change, such as a guarantee spinq previously made and no longer keeps. As Go modules require, a major bump also gets a new import path (`veitangie.dev/spinq/v2`, and so on).
 
@@ -324,7 +324,7 @@ if err != nil {
 defer pair.Spinner.Close()
 ```
 
-`BarRender` ships a handful of presets (`WithRoundedBarOptions`, `WithShadeBarOptions`, `WithDotBarOptions`, `WithMinimalBarOptions`, `WithThinBarOptions`), or takes functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own. `SmoothBarRender` (sub-cell precision, for smoother fill) has its own preset set instead (`WithSnakeSmoothOptions`, `WithBrailleSmoothOptions`, `WithPieSmoothOptions`, `WithDotSmoothOptions`, `WithShadeSmoothOptions`), plus the matching `SmoothWith*` functional options.
+`BarRender` ships a handful of presets (`BarWithRoundedPreset`, `BarWithShadePreset`, `BarWithDotPreset`, `BarWithMinimalPreset`, `BarWithThinPreset`), or takes functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own. `SmoothBarRender` (sub-cell precision, for smoother fill) has its own preset set instead (`SmoothWithSnakePreset`, `SmoothWithBraillePreset`, `SmoothWithPiePreset`, `SmoothWithDotPreset`, `SmoothWithShadePreset`), plus the matching `SmoothWith*` functional options.
 
 ## Composing frames
 
@@ -367,7 +367,7 @@ If `getFrame` itself also needs that same `getWidth` - to size a `DynamicBarRend
 
 ## Staying resilient across write errors
 
-A write failure (a resized/flaky terminal, a closed pipe) auto-stops the spinner - `Stop`/`StopWith`/`StopNoClear` become no-ops until `Start` is called again. `pair.Spinner.Err()` also delivers a `Panic` whenever a `FrameFunc` call panics, but that case is different: the panic is recovered, that one frame is just skipped, and the spinner is never stopped by it. A long-running program that wants to keep drawing across a write failure should range over `pair.Spinner.Err()` in the background and call `Start` again on each delivery - harmless to do for a `Panic` delivery too, since `Start` on an already-running spinner is a no-op:
+A write failure (a resized/flaky terminal, a closed pipe) auto-stops the spinner - `Stop`/`StopWith`/`StopNoClear` become no-ops until `Start` is called again. `pair.Spinner.Err()` also delivers a `PanicError` whenever a `FrameFunc` call panics, but that case is different: the panic is recovered, that one frame is just skipped, and the spinner is never stopped by it. A long-running program that wants to keep drawing across a write failure should range over `pair.Spinner.Err()` in the background and call `Start` again on each delivery - harmless to do for a `PanicError` delivery too, since `Start` on an already-running spinner is a no-op:
 
 ```go
 go func() {
@@ -384,7 +384,7 @@ go func() {
 
 ## Design
 
-spinq is actor-based: a single goroutine owns all spinner state, and every public method talks to it over a channel. The one exception worth knowing: `Start`'s initial frame, `StopNoClear`'s final frame, and a running `Set`'s redraw all fetch synchronously inside the actor, so a slow `FrameFunc` there blocks that call, any other `Start`/`Stop*`/`Set`/`Close` made concurrently on the same `Writer`, and `Close` itself - a plain `Write` is unaffected. A panic inside `FrameFunc` is recovered, reported on `Err()` as a `Panic`, and never crashes the process or stops the spinner.
+spinq is actor-based: a single goroutine owns all spinner state, and every public method talks to it over a channel. The one exception worth knowing: `Start`'s initial frame, `StopNoClear`'s final frame, and a running `Set`'s redraw all fetch synchronously inside the actor, so a slow `FrameFunc` there blocks that call, any other `Start`/`Stop*`/`Set`/`Close` made concurrently on the same `Writer`, and `Close` itself - a plain `Write` is unaffected. A panic inside `FrameFunc` is recovered, reported on `Err()` as a `PanicError`, and never crashes the process or stops the spinner.
 
 `Close` joins the actor's own goroutine, but not every short-lived goroutine spinq spawns along the way (a per-`Start` context watcher, the tail of a tick-triggered fetch) - those are cancelled, not joined, so nothing guarantees they've exited yet, though none do user-visible work by that point.
 

@@ -12,17 +12,15 @@ import (
 	"time"
 )
 
-// ErrNoFrame signals that a FrameFunc has no frame to offer on this call.
-// It is not a failure: Join treats an ErrNoFrame segment as "keep showing
-// whatever it last rendered" rather than blanking it out, so returning
-// ErrNoFrame is the correct way for a FrameFunc to say "nothing new yet."
+// ErrNoFrame signals a FrameFunc has nothing new to offer this call - not a
+// failure. Join keeps showing a segment's last frame instead of blanking it
+// out when it returns this.
 var ErrNoFrame error = errors.New("no frame")
 
-// Preset state sequences for use with Simple, SimpleOnceEvery, Random, and
-// RandomOnceEvery. These are plain []string values, copied into a FrameFunc
-// closure's own private state at construction time, so mutating one of
-// these package-level slices afterward has no effect on FrameFuncs already
-// built from it.
+// Preset state sequences for Simple, SimpleOnceEvery, Random, and
+// RandomOnceEvery. Copied into each FrameFunc's own state at construction,
+// so mutating one of these slices afterward doesn't affect FrameFuncs
+// already built from it.
 var (
 	DotsStates       []string = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	LineStates       []string = []string{"-", "\\", "|", "/"}
@@ -35,15 +33,22 @@ var (
 )
 
 // FrameFunc produces one frame of spinner/progress output on each call.
-// spinq's actor guarantees a given FrameFunc is never called concurrently
-// with itself, so a FrameFunc's own private state (like Simple's internal
-// index) never needs its own locking. If a FrameFunc reads external state
-// that other goroutines also write, synchronizing that access is the
-// FrameFunc's (and its caller's) responsibility, not spinq's.
+// spinq never calls a given FrameFunc concurrently with itself, so its own
+// private state (like Simple's internal index) never needs locking.
+// External state a FrameFunc reads that other goroutines also write is the
+// caller's own responsibility to synchronize.
 //
-// Returning a non-nil error signals "no frame this call" rather than a
-// failure - see ErrNoFrame and Join.
+// A non-nil error means "no frame this call", not a failure - see
+// ErrNoFrame and Join.
 type FrameFunc func() ([]byte, error)
+
+// DurationFormatFunc renders an elapsed time.Duration as a frame's text -
+// see Duration and DurationWithFormat.
+type DurationFormatFunc func(time.Duration) string
+
+// ProgressFunc reports a (current, total) reading - see Progress, which
+// enforces total > 0 and current <= total before ever calling render.
+type ProgressFunc func() (int, int)
 
 // Noop returns a FrameFunc that always renders an empty frame.
 func Noop() FrameFunc {
@@ -82,11 +87,10 @@ func Simple(states []string) FrameFunc {
 	}
 }
 
-// SimpleOnceEvery returns a FrameFunc like Simple, except it only advances
-// to the next state once every mod calls instead of on every call - useful
-// for slowing a spinner's cycle down relative to how often it's drawn. A
-// mod of 1 behaves exactly like Simple. An empty states or a non-positive
-// mod returns Noop; a single state returns Static.
+// SimpleOnceEvery is Simple, but only advances to the next state once
+// every mod calls instead of on every call - slows the cycle down relative
+// to how often it's drawn. mod == 1 behaves exactly like Simple. An empty
+// states or non-positive mod returns Noop; a single state returns Static.
 func SimpleOnceEvery(states []string, mod int) FrameFunc {
 	if len(states) == 0 || mod <= 0 {
 		return Noop()
@@ -121,7 +125,7 @@ func SimpleOnceEvery(states []string, mod int) FrameFunc {
 // constructed - see Duration.
 type DurationOptions struct {
 	StartAt *time.Time
-	Format  func(time.Duration) string
+	Format  DurationFormatFunc
 }
 
 // DefaultDurationOptions returns the default DurationOptions: an unset
@@ -134,7 +138,7 @@ func DefaultDurationOptions() DurationOptions {
 
 // DefaultDurationFormat returns the default duration formatter, which
 // renders a duration as seconds with one decimal place (e.g. "2.3s").
-func DefaultDurationFormat() func(d time.Duration) string {
+func DefaultDurationFormat() DurationFormatFunc {
 	return func(d time.Duration) string {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
@@ -147,7 +151,7 @@ type DurationOptionsFunc func(DurationOptions) DurationOptions
 // DurationWithFormat sets Duration's format function, which renders the
 // elapsed time.Duration as the frame's text. A nil format is a no-op,
 // leaving any previously configured Format untouched.
-func DurationWithFormat(format func(d time.Duration) string) DurationOptionsFunc {
+func DurationWithFormat(format DurationFormatFunc) DurationOptionsFunc {
 	if format == nil {
 		return func(do DurationOptions) DurationOptions { return do }
 	}
@@ -169,11 +173,9 @@ func DurationWithStartAt(startAt time.Time) DurationOptionsFunc {
 
 // Duration returns a FrameFunc that renders the elapsed time since a start
 // point, formatted by opt.Format (DefaultDurationFormat by default). Unless
-// DurationWithStartAt overrides it, the start point is captured lazily on the
-// FrameFunc's first call rather than when Duration itself is constructed,
-// so any gap between building the frame and actually starting the spinner
-// doesn't inflate the first reading. A nil timer, or an opt.Format left
-// (or set) nil, returns Noop.
+// DurationWithStartAt overrides it, the start point is captured lazily on
+// the FrameFunc's first call, not when Duration is constructed. A nil
+// timer, or an opt.Format left (or set) nil, returns Noop.
 func Duration(timer func() time.Time, opts ...DurationOptionsFunc) FrameFunc {
 	if timer == nil {
 		return Noop()
@@ -209,12 +211,12 @@ func Duration(timer func() time.Time, opts ...DurationOptionsFunc) FrameFunc {
 }
 
 // Random returns a FrameFunc that picks a state uniformly at random on
-// every call. By default it draws from math/rand/v2's package-level
-// (concurrency-safe) source; the first non-nil entry in rands is used
-// instead if there is one, and only needs its own synchronization if
-// something outside this FrameFunc also touches it (spinq itself never
-// calls it concurrently). Every other entry in rands, nil or not, is
-// ignored. An empty states returns Noop; a single state returns Static.
+// every call, drawing from math/rand/v2's package-level (concurrency-safe)
+// source by default. The first non-nil entry in rands is used instead if
+// there is one - only needs its own synchronization if something outside
+// this FrameFunc also touches it, since spinq itself never calls it
+// concurrently. Remaining rands entries are ignored. An empty states
+// returns Noop; a single state returns Static.
 func Random(states []string, rands ...*rand.Rand) FrameFunc {
 	if len(states) == 0 {
 		return Noop()
@@ -248,11 +250,10 @@ func Random(states []string, rands ...*rand.Rand) FrameFunc {
 	}
 }
 
-// RandomOnceEvery returns a FrameFunc like Random, except it only draws a
-// new state once every mod calls instead of on every call, showing that
-// draw for exactly mod calls before drawing again. A mod of 1 behaves
-// exactly like Random. An empty states or a non-positive mod returns Noop;
-// a single state returns Static.
+// RandomOnceEvery is Random, but only draws a new state once every mod
+// calls instead of on every call, showing that draw for exactly mod calls
+// before drawing again. mod == 1 behaves exactly like Random. An empty
+// states or non-positive mod returns Noop; a single state returns Static.
 func RandomOnceEvery(states []string, mod int, rands ...*rand.Rand) FrameFunc {
 	if len(states) == 0 || mod <= 0 {
 		return Noop()
@@ -324,12 +325,10 @@ func Surrounded(prefix string, delegate FrameFunc, suffix string) FrameFunc {
 }
 
 // Progress returns a FrameFunc that renders a progress bar/counter from a
-// (current, total) reading. It is the one place that validates the
-// reading: RenderFuncs are contractually allowed to assume total > 0 and
-// current <= total, so Progress returns ErrNoFrame instead of calling
-// render whenever that doesn't hold - leaving Join free to keep showing
-// the last good segment rather than a broken one.
-func Progress(progress func() (int, int), render RenderFunc) FrameFunc {
+// (current, total) reading. The one place that validates the reading -
+// RenderFuncs may assume total > 0 and current <= total - returning
+// ErrNoFrame instead of calling render whenever that doesn't hold.
+func Progress(progress ProgressFunc, render RenderFunc) FrameFunc {
 	return func() ([]byte, error) {
 		current, total := progress()
 		if current > total || total <= 0 {
@@ -341,11 +340,10 @@ func Progress(progress func() (int, int), render RenderFunc) FrameFunc {
 
 // Join returns a FrameFunc that renders each of fs joined by sep. Nil
 // entries in fs are dropped; if every entry is nil, Join returns Noop. Each
-// call fetches a fresh frame from every non-nil FrameFunc, but a segment
-// that returns an error keeps rendering its last successful frame instead
-// of going blank - so one segment having a transient hiccup doesn't blank
-// out the whole joined line. If every segment errors on a given call (none
-// has ever produced a frame yet), Join itself returns ErrNoFrame.
+// call fetches a fresh frame from every non-nil FrameFunc; a segment that
+// errors keeps rendering its last successful frame instead of going blank.
+// If every segment has errored on every call so far, Join returns
+// ErrNoFrame.
 func Join(sep string, fs ...FrameFunc) FrameFunc {
 	nils := 0
 	for _, f := range fs {
@@ -393,24 +391,21 @@ func Join(sep string, fs ...FrameFunc) FrameFunc {
 	}
 }
 
-// WidthFunc builds a fresh FrameFunc for a given terminal width - see
+// WidthFrameFunc builds a fresh FrameFunc for a given terminal width - see
 // Dynamic. BarRender/SmoothBarRender's length parameter is usually what a
-// WidthFunc closes over to produce a correctly-sized render pipeline.
-type WidthFunc func(width int) FrameFunc
+// WidthFrameFunc closes over to produce a correctly-sized render pipeline.
+type WidthFrameFunc func(width int) FrameFunc
 
 // Dynamic returns a FrameFunc that rebuilds itself via build whenever
-// getWidth's value changes, so the resulting content (e.g. a progress bar)
-// tracks the terminal's current width instead of a size fixed at
-// construction. build is only called again on an actual change - between
-// changes, Dynamic just keeps calling the FrameFunc build last returned, so
-// animated/progressing content (a moving spinner, an advancing percentage)
-// keeps updating every call, not just on resize.
+// getWidth's value changes; between changes, it just keeps calling the
+// FrameFunc build last returned, so animated content keeps updating every
+// call, not just on resize.
 //
 // getWidth is called on every call to the returned FrameFunc - a hot
 // path. Always pass CachedGetWidth's output here, never a raw
 // syscall-backed getWidth directly; see CachedGetWidth. A nil getWidth or
 // nil build returns Noop.
-func Dynamic(getWidth func() int, build WidthFunc) FrameFunc {
+func Dynamic(getWidth WidthFunc, build WidthFrameFunc) FrameFunc {
 	if getWidth == nil || build == nil {
 		return Noop()
 	}

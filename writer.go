@@ -65,6 +65,7 @@ type Writer interface {
 	IsReal() bool
 	GetWidth() WidthFunc
 	Err() <-chan error
+	sealInterface()
 }
 
 // WriterPassthrough is a Writer that writes straight through to the
@@ -79,27 +80,29 @@ type WriterPassthrough struct {
 
 var _ Writer = WriterPassthrough{}
 
-func (sw WriterPassthrough) Start(_ context.Context) error { return nil }
+func (WriterPassthrough) Start(context.Context) error { return nil }
 
-func (sw WriterPassthrough) Stop() error { return nil }
+func (WriterPassthrough) Stop() error { return nil }
 
-func (sw WriterPassthrough) StopWith(_ string) error { return nil }
+func (WriterPassthrough) StopWith(string) error { return nil }
 
-func (sw WriterPassthrough) StopNoClear(_ string) error { return nil }
+func (WriterPassthrough) StopNoClear(string) error { return nil }
 
-func (sw WriterPassthrough) Set(_ FrameFunc) error { return nil }
+func (WriterPassthrough) Set(FrameFunc) error { return nil }
 
-func (sw WriterPassthrough) IsReal() bool { return false }
+func (WriterPassthrough) IsReal() bool { return false }
 
-func (sw WriterPassthrough) GetWidth() WidthFunc { return func() int { return -1 } }
+func (WriterPassthrough) GetWidth() WidthFunc { return func() int { return -1 } }
 
-func (sw WriterPassthrough) Close() error { return nil }
+func (WriterPassthrough) Close() error { return nil }
 
-func (sw WriterPassthrough) Err() <-chan error {
+func (WriterPassthrough) Err() <-chan error {
 	res := make(chan error)
 	close(res)
 	return res
 }
+
+func (WriterPassthrough) sealInterface() {}
 
 type writerReal struct {
 	st       *spinnerState
@@ -168,6 +171,8 @@ func (sw writerReal) Close() error {
 func (sw writerReal) Err() <-chan error {
 	return sw.errCh
 }
+
+func (writerReal) sealInterface() {}
 
 type stdWriter struct {
 	underlying writerReal

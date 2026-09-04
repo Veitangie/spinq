@@ -27,6 +27,11 @@ type setGetFrame struct {
 	notify   chan error
 }
 
+type setTicker struct {
+	ticker <-chan time.Time
+	notify chan struct{}
+}
+
 type drawFrame struct {
 	revision uint64
 	frame    []byte
@@ -105,14 +110,18 @@ func (st *spinnerState) startBackground() {
 						typed.clear = true
 					}
 
-					if typed.clear && st.needClear {
-						lastFrame = append(ClearLineBytes, lastFrame...)
-						st.needClear = false
+					if typed.clear {
+						err = st.clear()
 					}
 					st.frame = []byte{}
 
 					if len(lastFrame) != 0 {
-						_, err = st.wrapped.Write(lastFrame)
+						_, errLastFrame := st.wrapped.Write(lastFrame)
+						if err != nil && errLastFrame != nil {
+							err = errors.Join(err, errLastFrame)
+						} else if errLastFrame != nil {
+							err = errLastFrame
+						}
 					}
 					st.writerMut.Unlock()
 					typed.notify <- err
@@ -159,6 +168,10 @@ func (st *spinnerState) startBackground() {
 
 					close(typed.notify)
 
+				case setTicker:
+					st.ticker = typed.ticker
+					close(typed.notify)
+
 				case reportError:
 					st.stopFromActor()
 					fireEvent(typed.err, st.errCh)
@@ -166,7 +179,12 @@ func (st *spinnerState) startBackground() {
 				default:
 					continue
 				}
-			case <-st.ticker:
+			case _, ok := <-st.ticker:
+				if !ok {
+					st.ticker = nil
+					continue
+				}
+
 				if st.inFlight || !st.running.Load() {
 					continue
 				}

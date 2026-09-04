@@ -110,7 +110,7 @@ func staticFrame(b []byte) FrameFunc {
 func asReal(t *testing.T, w io.Writer) writerReal {
 	t.Helper()
 	if std, ok := w.(stdWriter); ok {
-		return std.underlying
+		w = std.underlying
 	}
 	real, ok := w.(writerReal)
 	if !ok {

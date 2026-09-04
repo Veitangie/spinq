@@ -38,6 +38,10 @@ var (
 // External state a FrameFunc reads that other goroutines also write is the
 // caller's own responsibility to synchronize.
 //
+// spinq keeps the returned slice - it compares it against the next call's
+// output and may redraw it later - so a FrameFunc must not mutate bytes it
+// has already returned; copy out of any reused buffer first.
+//
 // A non-nil error means "no frame this call", not a failure - see
 // ErrNoFrame and Join.
 type FrameFunc func() ([]byte, error)
@@ -327,8 +331,12 @@ func Surrounded(prefix string, delegate FrameFunc, suffix string) FrameFunc {
 // Progress returns a FrameFunc that renders a progress bar/counter from a
 // (current, total) reading. The one place that validates the reading -
 // RenderFuncs may assume total > 0 and current <= total - returning
-// ErrNoFrame instead of calling render whenever that doesn't hold.
+// ErrNoFrame instead of calling render whenever that doesn't hold. A nil
+// progress or nil render returns Noop.
 func Progress(progress ProgressFunc, render RenderFunc) FrameFunc {
+	if progress == nil || render == nil {
+		return Noop()
+	}
 	return func() ([]byte, error) {
 		current, total := progress()
 		if current > total || total <= 0 {
@@ -395,6 +403,35 @@ func Join(sep string, fs ...FrameFunc) FrameFunc {
 // Dynamic. BarRender/SmoothBarRender's length parameter is usually what a
 // WidthFrameFunc closes over to produce a correctly-sized render pipeline.
 type WidthFrameFunc func(width int) FrameFunc
+
+// CropToWidth adapts a plain FrameFunc into a WidthFrameFunc that crops the
+// source frame to the width it is handed - grapheme-aware, keeping
+// zero-width sequences (so a trailing "\033[0m" still lands) while dropping
+// the tail past the limit. Its point is Dynamic's build argument:
+// Dynamic(getWidth, CropToWidth(frame)) makes any frame self-size, which
+// keeps the safe single-row clear instead of needing WithResizeDetection
+// (see the README's "On resizing" section).
+//
+// A width <= 0 leaves only the zero-width content - an effectively empty
+// frame, the same degradation DynamicBarRender has. A nil source yields
+// Noop; a source error passes straight through.
+func CropToWidth(source FrameFunc) WidthFrameFunc {
+	if source == nil {
+		return func(width int) FrameFunc {
+			return Noop()
+		}
+	}
+
+	return func(width int) FrameFunc {
+		return func() ([]byte, error) {
+			frame, err := source()
+			if err != nil {
+				return []byte{}, err
+			}
+			return crop(width, frame), nil
+		}
+	}
+}
 
 // Dynamic returns a FrameFunc that rebuilds itself via build whenever
 // getWidth's value changes; between changes, it just keeps calling the

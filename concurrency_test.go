@@ -56,7 +56,7 @@ func TestConcurrentWrites(t *testing.T) {
 	}
 }
 
-func TestConcurrentSetAndWrite(t *testing.T) {
+func TestConcurrentSetFrameAndWrite(t *testing.T) {
 	spinner := &syncBuffer{}
 	ticker := make(chan time.Time)
 
@@ -78,7 +78,7 @@ func TestConcurrentSetAndWrite(t *testing.T) {
 		frame := frames[i%len(frames)]
 
 		wg.Go(func() {
-			if err := pair.Spinner.Set(staticFrame(frame)); err != nil {
+			if err := pair.Spinner.SetFrame(staticFrame(frame)); err != nil {
 				t.Errorf("set error: %v", err)
 			}
 		})
@@ -89,7 +89,7 @@ func TestConcurrentSetAndWrite(t *testing.T) {
 		})
 	}
 	if !waitTimeout(&wg, 5*time.Second) {
-		t.Fatalf("concurrent Set/Write deadlocked instead of completing — goroutine dump:\n%s", dumpGoroutines())
+		t.Fatalf("concurrent SetFrame/Write deadlocked instead of completing — goroutine dump:\n%s", dumpGoroutines())
 	}
 }
 
@@ -121,16 +121,26 @@ func TestConcurrentTicksAndWrites(t *testing.T) {
 		}
 	}()
 
-	var writesDone sync.WaitGroup
-	writesDone.Go(func() {
+	var ops sync.WaitGroup
+	ops.Go(func() {
 		for range 200 {
 			if _, err := pair.Standard.Write([]byte("tick\n")); err != nil {
 				t.Errorf("write error: %v", err)
 			}
 		}
 	})
+	ops.Go(func() {
+		for i := range 200 {
+			if i%2 == 0 {
+				_ = pair.Spinner.SetTicker(make(chan time.Time))
+			} else {
+				_ = pair.Spinner.SetTicker(ticker)
+			}
+		}
+		_ = pair.Spinner.SetTicker(ticker)
+	})
 
-	writesDone.Wait()
+	ops.Wait()
 	close(stopTicks)
 	<-tickerDone
 
@@ -263,7 +273,7 @@ func TestConcurrentTicks_OverlappingFetchesSkipWhileOneIsInFlight(t *testing.T) 
 	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
-func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
+func TestSetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 	spinner := &syncBuffer{}
 	var oldCalls atomic.Int32
 	oldRelease := make(chan struct{})
@@ -292,8 +302,8 @@ func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 	setDone := make(chan struct{})
 	go func() {
 		defer close(setDone)
-		if err := pair.Spinner.Set(staticFrame([]byte("old-fast"))); err != nil {
-			t.Errorf("Set: %v", err)
+		if err := pair.Spinner.SetFrame(staticFrame([]byte("old-fast"))); err != nil {
+			t.Errorf("SetFrame: %v", err)
 		}
 	}()
 
@@ -302,7 +312,7 @@ func TestSetGetFrame_DoesNotApplyStaleResultFromReplacedGetFrame(t *testing.T) {
 	select {
 	case <-setDone:
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Set did not return within 2s (deadlocked) — goroutine dump:\n%s", dumpGoroutines())
+		t.Fatalf("SetFrame did not return within 2s (deadlocked) — goroutine dump:\n%s", dumpGoroutines())
 	}
 
 	time.Sleep(150 * time.Millisecond)
@@ -413,7 +423,7 @@ func TestFrameFunc_NeverCalledConcurrently_SlowTickInFlightAcrossStopStart(t *te
 	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
-func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
+func TestSetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	var callCount atomic.Int32
 	var counter int
 	gate := make(chan struct{})
@@ -444,8 +454,8 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	setDone := make(chan struct{})
 	go func() {
 		defer close(setDone)
-		if err := pair.Spinner.Set(getFrame); err != nil {
-			t.Errorf("Set: %v", err)
+		if err := pair.Spinner.SetFrame(getFrame); err != nil {
+			t.Errorf("SetFrame: %v", err)
 		}
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -455,7 +465,7 @@ func TestSetGetFrame_RacesConcurrentFetchOfSameUnderlyingClosure(t *testing.T) {
 	select {
 	case <-setDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Set did not return")
+		t.Fatal("SetFrame did not return")
 	}
 
 	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
@@ -545,7 +555,7 @@ func TestStopNoClear_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	}
 }
 
-func TestSetGetFrame_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
+func TestSetFrame_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	blockingFrame := func() ([]byte, error) { //nolint:unparam
@@ -564,7 +574,7 @@ func TestSetGetFrame_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	}
 
 	setDone := make(chan error, 1)
-	go func() { setDone <- pair.Spinner.Set(blockingFrame) }()
+	go func() { setDone <- pair.Spinner.SetFrame(blockingFrame) }()
 	<-entered
 
 	closeDone := make(chan struct{})
@@ -573,10 +583,10 @@ func TestSetGetFrame_ClosedWhileResponsePendingReturnsErrClosed(t *testing.T) {
 	select {
 	case err := <-setDone:
 		if !errors.Is(err, ErrClosed) {
-			t.Errorf("expected Set to return ErrClosed once the spinner closes while its response is still pending, got %v", err)
+			t.Errorf("expected SetFrame to return ErrClosed once the spinner closes while its response is still pending, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("Set did not return after the spinner was closed concurrently")
+		t.Fatal("SetFrame did not return after the spinner was closed concurrently")
 	}
 
 	close(release)
@@ -645,19 +655,25 @@ func TestStress_1000GoroutinesMixedOperationsWithFaultyInputs(t *testing.T) {
 					panicsEscaped.Add(1)
 				}
 			}()
-			switch i % 6 {
+			switch i % 7 {
 			case 0:
 				_ = pair.Spinner.Start(ctx)
 			case 1:
 				_ = pair.Spinner.Stop()
 			case 2:
-				_ = pair.Spinner.Set(frame)
+				_ = pair.Spinner.SetFrame(frame)
 			case 3:
 				_, _ = pair.Standard.Write([]byte("x\n"))
 			case 4:
 				_ = pair.Spinner.StopNoClear("bye")
 			case 5:
 				_ = pair.Spinner.StopWith("done")
+			case 6:
+				if i%2 == 0 {
+					_ = pair.Spinner.SetTicker(nil)
+				} else {
+					_ = pair.Spinner.SetTicker(ticker)
+				}
 			}
 		})
 	}

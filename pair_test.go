@@ -6,6 +6,7 @@ package spinq
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -42,12 +43,6 @@ func TestWrapPair_Errors(t *testing.T) {
 	t.Run("nil frame func", func(t *testing.T) {
 		if _, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, nil, ticker); err == nil {
 			t.Error("expected error when frame func is nil")
-		}
-	})
-
-	t.Run("nil ticker", func(t *testing.T) {
-		if _, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, frame, nil); err == nil {
-			t.Error("expected error when ticker is nil")
 		}
 	})
 }
@@ -254,10 +249,22 @@ func TestWrapFilePair_NilFrameFuncErrors(t *testing.T) {
 	}
 }
 
-func TestWrapFilePair_NilTickerErrors(t *testing.T) {
-	if _, err := WrapFilePair(context.Background(), os.Stdout, os.Stderr, staticFrame([]byte("*")), nil); err == nil {
-		t.Error("expected an error for a nil ticker")
+func TestWrapFilePair_NilTickerAccepted(t *testing.T) {
+	spinner := openTestPTY(t)
+
+	pair, err := WrapFilePair(context.Background(), spinner, spinner, staticFrame([]byte("*")), nil)
+	if err != nil {
+		t.Fatalf("WrapFilePair with a nil ticker: %v", err)
 	}
+	if _, ok := pair.Spinner.(writerReal); !ok {
+		t.Fatalf("expected a real spinner writer, got %T", pair.Spinner)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestWrapFilePair_ClosedSpinnerFallsBackToPassthrough(t *testing.T) {
@@ -291,8 +298,11 @@ func TestWrapFilePair_ClosedMainFallsBackToPassthroughForStandardOnly(t *testing
 	}
 	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
 
-	if _, ok := pair.Standard.(WriterPassthrough); !ok {
-		t.Errorf("expected Standard to fall back to a passthrough writer for a closed fd, got %T", pair.Standard)
+	std, ok := pair.Standard.(stdWriter)
+	if !ok {
+		t.Errorf("expected Standard to be an stdWriter, got %T", pair.Standard)
+	} else if _, live := std.underlying.(writerReal); live {
+		t.Error("expected Standard to be a passthrough for a closed fd, got one wired to the live actor")
 	}
 	if _, ok := pair.Spinner.(writerReal); !ok {
 		t.Errorf("expected Spinner to stay a real spinner writer when it is a terminal, got %T", pair.Spinner)
@@ -317,10 +327,10 @@ func TestWrapFilePair_SpinnerNotTerminalDisablesBoth(t *testing.T) {
 		t.Fatalf("WrapFilePair: %v", err)
 	}
 
-	if standard, ok := pair.Standard.(WriterPassthrough); !ok {
-		t.Errorf("expected Standard to be a passthrough writer when spinner is not a terminal, got %T", pair.Standard)
-	} else if standard.Writer != main {
-		t.Error("expected Standard's passthrough to wrap main")
+	if standard, ok := pair.Standard.(stdWriter); !ok {
+		t.Errorf("expected Standard to be an stdWriter when spinner is not a terminal, got %T", pair.Standard)
+	} else if standard.underlying != main {
+		t.Error("expected Standard to wrap main")
 	}
 	if spinnerW, ok := pair.Spinner.(WriterPassthrough); !ok {
 		t.Errorf("expected Spinner to be a passthrough writer when spinner is not a terminal, got %T", pair.Spinner)
@@ -369,10 +379,10 @@ func TestWrapFilePair_MainNotTerminalDisablesOnlyStandard(t *testing.T) {
 	}
 	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
 
-	if standard, ok := pair.Standard.(WriterPassthrough); !ok {
-		t.Errorf("expected Standard to be a passthrough writer when main is not a terminal, got %T", pair.Standard)
-	} else if standard.Writer != main {
-		t.Error("expected Standard's passthrough to wrap main")
+	if standard, ok := pair.Standard.(stdWriter); !ok {
+		t.Errorf("expected Standard to be an stdWriter when main is not a terminal, got %T", pair.Standard)
+	} else if standard.underlying != main {
+		t.Error("expected Standard to wrap main")
 	}
 	if _, ok := pair.Spinner.(writerReal); !ok {
 		t.Errorf("expected Spinner to stay a real spinner writer when it is a terminal, got %T", pair.Spinner)
@@ -397,15 +407,51 @@ func TestWrapFilePair_BothTerminalsKeepsBothReal(t *testing.T) {
 	}
 }
 
+func assertStandardNotAControlSurface(t *testing.T, standard io.Writer) {
+	t.Helper()
+	if _, ok := standard.(stdWriter); !ok {
+		t.Errorf("expected Standard to be an stdWriter, got %T", standard)
+	}
+	if w, ok := standard.(Writer); ok {
+		t.Errorf("Standard must not double as a control-surface Writer, but it satisfies the interface: %T", w)
+	}
+}
+
+func TestPair_StandardIsAlwaysStdWriterNotAControlSurface(t *testing.T) {
+	t.Run("live actor", func(t *testing.T) {
+		pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("*")), make(chan time.Time))
+		if err != nil {
+			t.Fatalf("WrapPair: %v", err)
+		}
+		defer callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
+
+		assertStandardNotAControlSurface(t, pair.Standard)
+	})
+
+	t.Run("passthrough", func(t *testing.T) {
+		main := &syncBuffer{}
+		pair := passthroughPair(main, &syncBuffer{})
+
+		assertStandardNotAControlSurface(t, pair.Standard)
+
+		if _, err := pair.Standard.Write([]byte("hello\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if main.String() != "hello\n" {
+			t.Errorf("expected a passthrough Standard to forward writes verbatim, got %q", main.String())
+		}
+	})
+}
+
 func TestWrapOS_NilFrameFuncErrors(t *testing.T) {
 	if _, err := WrapOS(context.Background(), nil, make(chan time.Time)); err == nil {
 		t.Error("expected an error for a nil FrameFunc")
 	}
 }
 
-func TestWrapOS_NilTickerErrors(t *testing.T) {
-	if _, err := WrapOS(context.Background(), staticFrame([]byte("*")), nil); err == nil {
-		t.Error("expected an error for a nil ticker")
+func TestWrapOS_NilTickerAccepted(t *testing.T) {
+	if _, err := WrapOS(context.Background(), staticFrame([]byte("*")), nil); err != nil {
+		t.Errorf("expected a nil ticker to be accepted, got %v", err)
 	}
 }
 
@@ -417,8 +463,10 @@ func TestWrapOS_CIEnvDisablesSpinner(t *testing.T) {
 		t.Fatalf("WrapOS: %v", err)
 	}
 
-	if _, ok := pair.Standard.(WriterPassthrough); !ok {
-		t.Errorf("expected Standard to be a passthrough writer under CI, got %T", pair.Standard)
+	if standard, ok := pair.Standard.(stdWriter); !ok {
+		t.Errorf("expected Standard to be an stdWriter under CI, got %T", pair.Standard)
+	} else if standard.underlying != os.Stdout {
+		t.Error("expected Standard to wrap os.Stdout under CI")
 	}
 	if _, ok := pair.Spinner.(WriterPassthrough); !ok {
 		t.Errorf("expected Spinner to be a passthrough writer under CI, got %T", pair.Spinner)

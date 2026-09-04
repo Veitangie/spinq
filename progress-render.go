@@ -433,8 +433,9 @@ func BarWithThinPreset() BarOptionsFunc {
 	}
 }
 
-// SmoothBarRender returns a RenderFunc that draws a progress bar length
-// cells wide, using sub-cell-precision divider glyphs (see
+// SmoothBarRender returns a RenderFunc that draws a progress bar up to
+// length cells wide (a hair less when length isn't a whole multiple of a
+// multi-cell glyph), using sub-cell-precision divider glyphs (see
 // SmoothWithDivider) at the boundary between filled and empty for smoother
 // visual movement than BarRender's single fixed divider. It renders at a
 // constant width across every progress level. At exactly 100% (in either
@@ -521,10 +522,11 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 	}
 }
 
-// BarRender returns a RenderFunc that draws a progress bar length cells
-// wide, with a single fixed divider glyph at the boundary between filled
-// and empty (see BarWithDivider). It renders at a constant width across
-// every progress level, including 100%.
+// BarRender returns a RenderFunc that draws a progress bar up to length
+// cells wide (a hair less when length isn't a whole multiple of a
+// multi-cell glyph), with a single fixed divider glyph at the boundary
+// between filled and empty (see BarWithDivider). It renders at a constant
+// width across every progress level, including 100%.
 //
 // It returns NoopRender if length leaves no room for the bar, or if Full
 // and Empty don't render at the same width.

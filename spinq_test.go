@@ -136,12 +136,12 @@ func TestWithTicker_SetsTicker(t *testing.T) {
 	}
 }
 
-func TestWithTicker_NilIsANoOp(t *testing.T) {
+func TestWithTicker_NilClearsTicker(t *testing.T) {
 	original := make(chan time.Time)
 	opt := WithTicker(original)(JustStartOptions{})
 	opt = WithTicker(nil)(opt)
-	if opt.Ticker != (<-chan time.Time)(original) {
-		t.Errorf("expected WithTicker(nil) to leave the previous Ticker untouched")
+	if opt.Ticker != nil {
+		t.Errorf("expected WithTicker(nil) to clear the Ticker, got %v", opt.Ticker)
 	}
 }
 
@@ -155,6 +155,19 @@ func TestWithEvery_SetsATickingTicker(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Error("Ticker from WithEvery never ticked")
 	}
+}
+
+func TestWithEvery_NonPositiveDurationLeavesNoTicker(t *testing.T) {
+	opt := WithEvery(0)(JustStartOptions{Ticker: make(chan time.Time)})
+	if opt.Ticker != nil {
+		t.Errorf("expected WithEvery(0) to leave no ticker, got %v", opt.Ticker)
+	}
+
+	pair, err := JustStart(WithEvery(0), WithFrame(Static("*")))
+	if err != nil {
+		t.Fatalf("JustStart with no ticker: %v", err)
+	}
+	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
 
 func TestWithFrame_SetsFrame(t *testing.T) {

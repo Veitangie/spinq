@@ -12,9 +12,8 @@ import (
 
 // Every returns a ticker channel that fires roughly every d - a thin
 // convenience wrapper around time.NewTicker(d).C for use as WrapPair's or
-// JustStart's ticker argument. A non-positive d returns nil (a channel
-// that never fires) instead of panicking; WrapPair/WrapFilePair/WrapOS
-// reject a nil ticker with a clean error.
+// JustStart's ticker argument. A non-positive d returns nil instead of
+// panicking; a nil ticker means no periodic redraws (see WrapPair).
 func Every(d time.Duration) <-chan time.Time {
 	if d <= 0 {
 		return nil
@@ -84,13 +83,9 @@ func WithStartContext(ctx context.Context) JustStartOptionsFunc {
 	}
 }
 
-// WithTicker sets the ticker channel driving redraws. A nil ticker is a
-// no-op, leaving any previously configured Ticker untouched.
+// WithTicker sets the ticker channel driving redraws. A nil ticker clears
+// any previously configured Ticker: no periodic redraws (see WrapPair).
 func WithTicker(ticker <-chan time.Time) JustStartOptionsFunc {
-	if ticker == nil {
-		return noop()
-	}
-
 	return func(jso JustStartOptions) JustStartOptions {
 		jso.Ticker = ticker
 		return jso
@@ -98,7 +93,7 @@ func WithTicker(ticker <-chan time.Time) JustStartOptionsFunc {
 }
 
 // WithEvery sets the ticker driving redraws to Every(d). A non-positive
-// d (see Every) makes JustStart fail with a clean error.
+// d (see Every) leaves JustStart with no periodic redraws.
 func WithEvery(d time.Duration) JustStartOptionsFunc {
 	return func(jso JustStartOptions) JustStartOptions {
 		jso.Ticker = Every(d)
@@ -156,6 +151,13 @@ func WithDivider(div string) JustStartOptionsFunc {
 // DefaultResizeDetection for zero-configuration sources. A nil getWidth
 // is a no-op, leaving resize detection off. A panicking getWidth never
 // crashes the process, reporting 0 for that call instead.
+//
+// You usually don't want this. A self-sizing frame (Dynamic,
+// DynamicBarRender, DynamicSmoothBarRender) fits on its own and keeps the
+// safe single-row clear; with resize detection on, the shrink cleanup can
+// erase on-screen output above the spinner during a resize, on any
+// terminal. Read the README's "On resizing" section before reaching for
+// it.
 func WithResizeDetection(getWidth WidthFunc) JustStartOptionsFunc {
 	if getWidth == nil {
 		return noop()

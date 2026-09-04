@@ -17,25 +17,25 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
-// Pair bundles two writers sharing one spinner: Standard - a plain io.Writer
-// for the program's normal output (which the spinner clears out of the way
-// and redraws around), and Spinner - a Writer for the animated frame
-// itself, plus lifecycle control and error reporting (Start/Stop/Set/
-// Close/Err). Standard and Spinner may be the same underlying stream, or
-// fall back to one another, depending on how the pair was constructed -
-// see WrapPair, WrapFilePair, WrapOS, and JustStart.
+// Pair holds a program's two output surfaces around one spinner: Standard -
+// a plain io.Writer for normal output, which the spinner clears out of the
+// way and redraws around - and Spinner - the Writer for the animated frame
+// itself, and the sole handle for lifecycle control and error reporting
+// (Start/Stop/SetFrame/Close/Err). Both may wrap the same underlying
+// stream; which concrete types they get depends on the constructor - see
+// WrapPair, WrapFilePair, WrapOS, and JustStart.
 type Pair struct {
-	// Standard is deliberately just an io.Writer - its concrete value
-	// never implements Writer's lifecycle methods (Start/Stop/Set/
-	// Close/Err/...), even though it shares the same spinner actor as
-	// Spinner. Use Spinner for lifecycle control.
+	// Standard is typed as a plain io.Writer on purpose: the spinner is
+	// driven only through Spinner. Writes to Standard are still
+	// coordinated with the spinner so the two streams never corrupt each
+	// other's output.
 	Standard io.Writer
 	Spinner  Writer
 }
 
 func passthroughPair(main, spinner io.Writer) *Pair {
 	return &Pair{
-		Standard: WriterPassthrough{main},
+		Standard: stdWriter{main},
 		Spinner:  WriterPassthrough{spinner},
 	}
 }
@@ -65,6 +65,13 @@ func DefaultWrapOptions() WrapOptions {
 // zero-configuration sources. A nil getWidth is a no-op, leaving resize
 // detection off. A panicking getWidth never crashes the process, reporting
 // 0 for that call instead.
+//
+// You usually don't want this. A self-sizing frame (Dynamic,
+// DynamicBarRender, DynamicSmoothBarRender) fits on its own and keeps the
+// safe single-row clear; with resize detection on, the shrink cleanup can
+// erase on-screen output above the spinner during a resize, on any
+// terminal. Read the README's "On resizing" section before reaching for
+// it.
 func WrapWithResizeDetection(getWidth WidthFunc) WrapOptionsFunc {
 	if getWidth == nil {
 		return func(wo WrapOptions) WrapOptions { return wo }
@@ -81,21 +88,20 @@ func WrapWithResizeDetection(getWidth WidthFunc) WrapOptionsFunc {
 // it (or calling Close) stops the actor and makes every subsequent call
 // return ErrClosed; a nil ctx defaults to context.Background(). getFrame
 // supplies frames on demand and is called by the actor on its own
-// schedule (start, ticker, and Set), never concurrently with itself.
+// schedule (start, ticker, and SetFrame), never concurrently with itself.
 // ticker drives periodic redraws; see Every for a simple wall-clock
-// source, or supply your own channel (e.g. for tests).
+// source, or supply your own channel (e.g. for tests). A nil or closed
+// ticker means no periodic redraws - drive them via Write/SetFrame, or
+// install a ticker later with Writer.SetTicker.
 //
 // If main or spinner is nil, the other is used for both. It is an error for
-// both to be nil, for getFrame to be nil, or for ticker to be nil.
+// both to be nil or for getFrame to be nil.
 func WrapPair(ctx context.Context, main, spinner io.Writer, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
 	if main == nil && spinner == nil {
 		return nil, errors.New("both writers are nil")
 	}
 	if getFrame == nil {
 		return nil, errors.New("frame function is nil")
-	}
-	if ticker == nil {
-		return nil, errors.New("ticker for spinner is nil")
 	}
 
 	if main == nil {
@@ -166,12 +172,12 @@ func WrapPair(ctx context.Context, main, spinner io.Writer, getFrame FrameFunc, 
 
 // WrapFilePair is WrapPair for *os.File streams: it checks whether spinner
 // (and, if that's a terminal, main too) is actually a terminal via isatty,
-// falling back to a plain passthrough - no actor, no mutex, Start/Stop/Set
-// become no-ops - for either stream that isn't. Safe to call
-// unconditionally on redirected output (a pipe, a file, CI logs). Both
-// streams are wrapped via go-colorable for correct ANSI rendering on
-// legacy Windows terminals. WrapOS is this function applied to
-// os.Stdout/os.Stderr.
+// falling back to a plain passthrough - no actor, no mutex, with
+// Start/Stop/SetFrame/SetTicker all no-ops - for either stream that isn't.
+// Safe to call unconditionally on redirected output (a pipe, a file, CI
+// logs). Both streams are wrapped via go-colorable for correct ANSI
+// rendering on legacy Windows terminals. WrapOS is this function applied
+// to os.Stdout/os.Stderr.
 func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
 	if main == nil && spinner == nil {
 		return nil, errors.New("both files are nil")
@@ -185,10 +191,6 @@ func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFun
 
 	if getFrame == nil {
 		return nil, errors.New("frame function is nil")
-	}
-
-	if ticker == nil {
-		return nil, errors.New("ticker for spinner is nil")
 	}
 
 	colorableMain, colorableSpinner := colorable.NewColorable(main), colorable.NewColorable(spinner)
@@ -205,7 +207,7 @@ func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFun
 	}
 
 	if !inTermStandard {
-		res.Standard = WriterPassthrough{colorableMain}
+		res.Standard = stdWriter{colorableMain}
 	}
 	return res, nil
 }
@@ -219,10 +221,6 @@ func WrapFilePair(ctx context.Context, main, spinner *os.File, getFrame FrameFun
 func WrapOS(ctx context.Context, getFrame FrameFunc, ticker <-chan time.Time, opts ...WrapOptionsFunc) (*Pair, error) {
 	if getFrame == nil {
 		return nil, errors.New("frame function is nil")
-	}
-
-	if ticker == nil {
-		return nil, errors.New("ticker for spinner is nil")
 	}
 
 	if _, ok := os.LookupEnv("CI"); ok {

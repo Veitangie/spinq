@@ -180,7 +180,7 @@ func TestAwareClearerDrawer_ClearMess(t *testing.T) {
 		if err := a.clearMess(st); err != nil {
 			t.Fatalf("clearMess: %v", err)
 		}
-		if got := buf.String(); got != string(ClearLineBytes) {
+		if got := buf.String(); got != string(clearLineBytes) {
 			t.Errorf("expected exactly one clearBytes sequence, got %q", got)
 		}
 		if st.needClear {
@@ -196,7 +196,7 @@ func TestAwareClearerDrawer_ClearMess(t *testing.T) {
 		if err := a.clearMess(st); err != nil {
 			t.Fatalf("clearMess: %v", err)
 		}
-		want := string(ClearLineBytes) + strings.Repeat(string(clearPrevLine), 3)
+		want := string(clearLineBytes) + strings.Repeat(string(clearPrevLine), 3)
 		if got := buf.String(); got != want {
 			t.Errorf("expected clearBytes + 3 clearPrevLine sequences (4 rows total) for 35 cols at width 10, got %q want %q", got, want)
 		}
@@ -210,7 +210,7 @@ func TestAwareClearerDrawer_ClearMess(t *testing.T) {
 		if err := a.clearMess(st); err != nil {
 			t.Fatalf("clearMess: %v", err)
 		}
-		want := string(ClearLineBytes) + string(clearPrevLine)
+		want := string(clearLineBytes) + string(clearPrevLine)
 		if got := buf.String(); got != want {
 			t.Errorf("expected clearBytes + 1 clearPrevLine sequence (2 rows total) for 80 cols at width 40, got %q want %q", got, want)
 		}
@@ -319,7 +319,7 @@ func TestAwareClearerDrawer_Clear(t *testing.T) {
 		if err := a.clear(st); err != nil {
 			t.Fatalf("clear: %v", err)
 		}
-		if got := buf.String(); got != string(ClearLineBytes) {
+		if got := buf.String(); got != string(clearLineBytes) {
 			t.Errorf("expected a plain clearBytes write, got %q", got)
 		}
 		if st.needClear {
@@ -352,7 +352,7 @@ func TestAwareClearerDrawer_Clear(t *testing.T) {
 		if err := a.clear(st); err != nil {
 			t.Fatalf("clear: %v", err)
 		}
-		if got := buf.String(); got != string(ClearLineBytes) {
+		if got := buf.String(); got != string(clearLineBytes) {
 			t.Errorf("expected exactly one clearBytes sequence (no double clear), got %q", got)
 		}
 	})

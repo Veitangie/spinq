@@ -1,6 +1,7 @@
 // spinq - Simple spinner toolqit
 // Copyright (C) 2026 Veitangie
 // SPDX-License-Identifier: Apache-2.0
+
 package spinq
 
 import (

@@ -89,9 +89,9 @@ func DefaultGetWidth(ctx context.Context) (WidthFunc, error) {
 // SIGWINCH handler to detect a resize. ctx governs the lifetime of that
 // handler (see DefaultSigwinch); a nil ctx defaults to
 // context.Background(). Falls back to a no-op if os.Stderr isn't a real
-// terminal. If you also need the getWidth it wired up - e.g. to size a
-// DynamicBarRender built for the same call - use DefaultResizeDetection
-// instead, which returns both.
+// terminal. For a self-sizing frame you want the getWidth alone, not this
+// option - DefaultResizeDetection returns both; see the README's "On
+// resizing" section.
 func WithDefaultResizeDetection(ctx context.Context) JustStartOptionsFunc {
 	getWidth, err := DefaultGetWidth(ctx)
 	if err != nil {

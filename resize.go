@@ -5,6 +5,7 @@
 package spinq
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"math"
@@ -42,6 +43,11 @@ func zeroOnPanic(underlying WidthFunc) WidthFunc {
 //
 // The returned func never crashes on a panicking getWidth, reporting 0
 // instead for that call - same fallback as a failed WidthFromFile query.
+//
+// CachedGetWidth spawns one background goroutine to watch sigwinch; it
+// runs until sigwinch is closed. DefaultSigwinch and SigwinchFromPoller
+// both close their channel when their ctx is cancelled - a hand-rolled
+// sigwinch that never closes leaks the goroutine.
 func CachedGetWidth(sigwinch <-chan struct{}, getWidth WidthFunc) WidthFunc {
 	getWidth = zeroOnPanic(getWidth)
 	current := atomic.Int64{}
@@ -72,8 +78,9 @@ func CachedGetWidth(sigwinch <-chan struct{}, getWidth WidthFunc) WidthFunc {
 // getWidth for CachedGetWidth, but too expensive to pass directly to
 // WrapWithResizeDetection/WithResizeDetection or Dynamic/DynamicRender;
 // wrap it in CachedGetWidth first. Errors once up front if file isn't a
-// real terminal (or is nil); the returned func itself never errors,
-// returning 0 if a later query fails (e.g. the file closed).
+// real terminal (or is nil), pairing that error with a func that always
+// reports -1 ("nothing to detect"). On success the func never errors,
+// reporting 0 for any later query that fails (e.g. the file closed).
 func WidthFromFile(file *os.File) (WidthFunc, error) {
 	if file == nil {
 		return func() int { return -1 }, errors.New("unable to determine width for nil file")
@@ -132,6 +139,7 @@ func SigwinchFromPoller(ctx context.Context, d time.Duration) <-chan struct{} {
 	go func() {
 		defer close(sigwinch)
 		ticker := time.NewTicker(d)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
@@ -200,4 +208,32 @@ func Portion(width WidthFunc, portion float64) WidthFunc {
 // reject it, it just always returns from.
 func Clamp(width WidthFunc, from, to int) WidthFunc {
 	return func() int { return max(from, min(to, width())) }
+}
+
+func crop(width int, data []byte) []byte {
+	iter := graphemeOpts.BytesGraphemes(data)
+	total := 0
+	canTakeMore := true
+	result := bytes.Buffer{}
+	for iter.Next() {
+		size := iter.Width()
+		cur := iter.Value()
+
+		if size == 0 {
+			result.Write(cur)
+			continue
+		}
+		if !canTakeMore {
+			continue
+		}
+
+		if total+size <= width {
+			total += size
+			result.Write(cur)
+			continue
+		}
+		canTakeMore = false
+	}
+
+	return result.Bytes()
 }

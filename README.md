@@ -135,7 +135,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	resizeOpt, getWidth, err := spinq.WrapDefaultResizeDetection(ctx)
+	getWidth, err := spinq.DefaultGetWidth(ctx)
 	if err != nil {
 		fmt.Printf("Failed to detect terminal width: %s\n", err.Error())
 		os.Exit(1)
@@ -152,7 +152,11 @@ func main() {
 	)
 	getFrame := spinq.Progress(func() (int, int) { return int(count.Load()), total }, render)
 
-	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond), resizeOpt)
+	// No resize option: DynamicBarRender fits the bar itself, so every clear
+	// stays one row. See the "On resizing" section of the README for when
+	// you'd want spinq.WrapWithResizeDetection instead - and why you usually
+	// don't.
+	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond))
 	if err != nil {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)
@@ -200,7 +204,7 @@ spinq is meant to stay small and easy to use, so it comes with some restrictions
 
 - **No raw/true TTY mode.** spinq never puts the terminal into raw mode, never reads input, and isn't a TUI framework. It's a simple ANSI-writing `io.Writer`. For when you need something to just spin.
 
-- **No automatic width detection.** Bar widths are explicit `int` arguments by default - spinq never queries the terminal size on its own. If you want responsive bars, that's an explicit opt-in - for the common case (size against `os.Stderr`, real `SIGWINCH`), `WrapDefaultResizeDetection`/`DefaultResizeDetection` wire it up in one call and hand back the `getWidth` too (see the [responsive bar example](#see-it-in-action) above). To wire it up yourself: a `getWidth` (see `WidthFromFile`), wrapped in `CachedGetWidth` so the actual syscall only happens on a real resize instead of on every frame, shaped with `Portion`/`Offset`/`Clamp` as needed (half the terminal, minus room for a label, bounded to a sane range), and passed to `DynamicBarRender`/`DynamicSmoothBarRender` - or `Dynamic` directly, for anything that isn't a bar.
+- **No automatic width detection.** Bar widths are explicit `int` arguments - spinq never queries the terminal size on its own. Responsive bars are opt-in; see [On resizing](#on-resizing).
 
 - **No multiline or multi-bar dashboards.** spinq can only manage one line. If you want several concurrent progress bars stacked on screen, spinq is not a good choice.
 
@@ -212,13 +216,15 @@ spinq is scoped deliberately narrow - see above. That's not the right shape for 
 
 - **[briandowns/spinner](https://github.com/briandowns/spinner)** - you want a spinner only, nothing else, at the smallest possible dependency footprint, with 90+ built-in character sets to pick from. You don't need a progress bar, resize-aware rendering, or spinq's stdout/stderr write coordination.
 
-- **[yacspin](https://github.com/theckman/yacspin)** - same spinner-only scope as briandowns/spinner, with more built-in behavior: automatic padding so the animation's width doesn't shift surrounding text, and named success/failure stop methods instead of composing your own final message via `StopWith`. You still don't need a progress bar or spinq's stdout/stderr coordination.
+- **[pin](https://github.com/yarlson/pin)** - same spinner-only scope as briandowns/spinner, at a similarly small footprint, with colors, spinner/text/prefix positioning, and named success/failure stop methods built in. You still don't need a progress bar or spinq's stdout/stderr coordination.
+
+- **[yacspin](https://github.com/theckman/yacspin)** - same spinner-only scope, with more built-in behavior still: automatic padding so the animation's width doesn't shift surrounding text, plus its own named success/failure stop methods instead of composing your own final message via `StopWith`. You still don't need a progress bar or spinq's stdout/stderr coordination.
 
 - **[mpb](https://github.com/vbauerster/mpb)** - you need more than one progress bar on screen at once - a parallel download manager, several workers each with their own bar. spinq explicitly manages a single line only; mpb is built around multiple bars added and removed dynamically, with decorator column widths kept in sync across all of them.
 
 - **[cheggaaa/pb](https://github.com/cheggaaa/pb)** - similar multi-bar territory (it calls this a pool), plus built-in `io.Reader`/`io.Writer` wrapping so a bar tracks bytes read or written from a stream without you wiring up a counter yourself, and byte-unit formatting (KiB/MiB/...) out of the box.
 
-- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~4.7x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
+- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~4.6x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
 
 - **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
 
@@ -231,20 +237,21 @@ If what you want is a spinner and/or a single-line progress bar, coordinated wit
 <details id="footprint-comparison">
 <summary>Full size comparison, if you want the numbers behind "roughly Nx heavier"</summary>
 
-Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in this section, each at its latest tagged release. This isn't cherry-picked to flatter spinq - one of the alternatives below is genuinely smaller (a bare spinner, nothing else):
+Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in this section, each at its latest tagged release. This isn't cherry-picked to flatter spinq - two of the alternatives below are genuinely smaller (bare spinners, nothing else):
 
 | library | version | scope | delta | vs. spinq |
 |---|---|---|---:|---:|
 | [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.58x |
-| **spinq** | **v1.0.0-rc.12** | spinner + bar + resize-aware + grapheme-correct | **644 KB** | **1.00x** |
-| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.31x |
-| [mpb](https://github.com/vbauerster/mpb) | v8.16.0 | dedicated multi-progress-bar library | 1020 KB | 1.58x |
-| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1448 KB | 2.25x |
-| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1736 KB | 2.70x |
-| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2232 KB | 3.47x |
-| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.66x |
+| [pin](https://github.com/yarlson/pin) | v0.10.0 | bare spinner only, colored, zero deps | 436 KB | 0.67x |
+| **spinq** | **v1.0.0** | spinner + bar + resize-aware + grapheme-correct | **648 KB** | **1.00x** |
+| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.30x |
+| [mpb](https://github.com/vbauerster/mpb) | v8.16.1 | dedicated multi-progress-bar library | 1020 KB | 1.57x |
+| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1448 KB | 2.23x |
+| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1736 KB | 2.68x |
+| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2232 KB | 3.44x |
+| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.63x |
 
-Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured August 2026, same Go toolchain (go1.27.0) throughout.
+Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured September 2026, same Go toolchain (go1.27.0) throughout.
 
 </details>
 
@@ -254,7 +261,7 @@ Read this as directional, not a permanent ranking - each library's own dependenc
 go get veitangie.dev/spinq
 ```
 
-Requires the Go version declared in `go.mod`.
+Requires the Go version declared in `go.mod` (not covered by SemVer - see [Versioning](#versioning)).
 
 ## Versioning
 
@@ -263,6 +270,10 @@ spinq follows semantic versioning, judged strictly from the calling code's persp
 - **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior (e.g. `SigwinchFromPoller` returning a literal `nil` channel for a non-positive duration - unusable the moment a caller ranges over it - instead of an already-closed one, matching every other degenerate-input case in the package), adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
 - **Minor** - additive: everything that already compiled keeps compiling and behaving the same. A new optional parameter via `...T`, a new method, a new exported function or type.
 - **Major** - anything that breaks compilation for existing callers - a changed signature on an existing exported function or method - or breaks an existing behavioral contract even without a signature change, such as a guarantee spinq previously made and no longer keeps. As Go modules require, a major bump also gets a new import path (`veitangie.dev/spinq/v2`, and so on).
+
+### Go version
+
+The `go` directive in `go.mod` is not covered by SemVer - it tracks what spinq's dependencies require and can move in any release.
 
 ## Quick start
 
@@ -305,6 +316,8 @@ pair, err := spinq.JustStart(
 	spinq.WithEvery(50 * time.Millisecond),
 )
 ```
+
+spinq ships a handful of state sets - `DotsStates`, `LineStates`, `ArrowStates`, `PipeStates`, `FlyThroughStates`, `BounceStates`, `GrowingStates`, `BinaryStates` - or pass your own `[]string` (e.g. a set from [go-spinners](https://pkg.go.dev/github.com/gabe565/go-spinners)). Each `Simple`/`Random` FrameFunc copies the slice at construction, so a FrameFunc already built is unaffected if you later mutate the set; a set mutated in place still affects *other* callers' later use of it, so treat the exported ones as read-only.
 
 ## Progress bars
 
@@ -352,18 +365,41 @@ frame := spinq.Join("",
 
 - `JustStart(opts...)`: `WrapOS` with defaults and `Start` already called.
 
-Resize detection is off by default but can be opted in. Every layer takes `WrapOptionsFunc`s (`JustStart` takes the equivalent `JustStartOptionsFunc`s), and `WrapWithDefaultResizeDetection` wires up sensible platform defaults with zero configuration at any of them:
+The `ticker` is optional and not fixed for the Pair's lifetime. Pass `nil` (or `spinq.Every(0)`) for a push-shaped API: nothing is redrawn on a timer, so the frame's contents only change when you call `SetFrame` with a new `FrameFunc` (`Start` and `StopNoClear` also fetch one). `pair.Spinner.SetTicker(ch)` installs or swaps the redraw ticker at any point - running or not - and `SetTicker(nil)` turns periodic redraws back off. Resize detection is lazy the same way: the terminal width is only re-checked when the spinner next draws, so without a ticker a resize won't reflow the frame until your next `SetFrame` or `Write`.
+
+Every layer takes `WrapOptionsFunc`s (`JustStart` takes the equivalent `JustStartOptionsFunc`s). The one worth knowing is resize/width handling - see [On resizing](#on-resizing).
+
+## On resizing
+
+spinq never queries the terminal size on its own - bar widths are explicit `int`s. Responsive bars are opt-in, and there are two ways to get one.
+
+**Self-sizing frame (recommended).** Build the frame with `Dynamic` / `DynamicBarRender` / `DynamicSmoothBarRender`, sized by a cached width source: `spinq.DefaultGetWidth(ctx)` (`os.Stderr` + real `SIGWINCH`, or a poller on Windows), or the `getWidth` handed back by `WrapDefaultResizeDetection` / `DefaultResizeDetection`. Shape it with `Portion` / `Offset` / `Clamp` (half the terminal, minus room for a label, bounded to a sane range). Do **not** also pass `WithResizeDetection` / `WrapWithResizeDetection`: the frame re-sizes itself on every tick, and every clear stays a single `\r\033[K` that only ever touches the cursor's own row - it cannot corrupt anything. Worst case, a width you miscalculated overflows the line and leaves one stale row above the spinner; that's cosmetic and clears itself once the frame fits again.
 
 ```go
-pair, err := spinq.WrapOS(
-	context.Background(),
-	getFrame,
-	spinq.Every(100*time.Millisecond),
-	spinq.WrapWithDefaultResizeDetection(context.Background()),
+getWidth, err := spinq.DefaultGetWidth(ctx)
+// ...
+render := spinq.JoinRender(" ",
+	spinq.DynamicBarRender(spinq.Offset(getWidth, -21), spinq.BarWithThinPreset()),
+	spinq.FractRender("/"), spinq.PercentRender(),
 )
+p, err := spinq.WrapOS(ctx, spinq.Progress(count, render), spinq.Every(100*time.Millisecond))
 ```
 
-If `getFrame` itself also needs that same `getWidth` - to size a `DynamicBarRender`, for instance - resolve both together with `WrapDefaultResizeDetection` (or `DefaultResizeDetection` at the `JustStart` layer) instead of wiring `WrapWithDefaultResizeDetection` and a separate width source up by hand; see the [responsive bar example](#see-it-in-action).
+That is what the [responsive bar example](#see-it-in-action) does; run it with `go run .` under `examples/dynamic`.
+
+**`WithResizeDetection`, only for a frame that can't size itself.** spinq then crops the whole frame to the current width, and on a shrink re-clears every row the old frame now wraps to:
+
+```go
+resizeOpt, getWidth, err := spinq.WrapDefaultResizeDetection(ctx)
+// ... build render with getWidth exactly as above ...
+p, err := spinq.WrapOS(ctx, spinq.Progress(count, render), spinq.Every(100*time.Millisecond), resizeOpt)
+```
+
+That shrink cleanup walks the cursor upward by `ceil(frameCells / width)` rows. The `width` it counts against comes from an asynchronously-updated cache and is not pinned across the `write(2)` that follows, so during an active resize (dragging a window corner) the terminal can already be a different size. If it grew, the walk overshoots the spinner's own line and erases real on-screen output above it - up to a screenful, on **any** terminal. Terminals that don't reflow wrapped lines on resize (xterm, GNU screen, the Linux console, Alacritty < 0.5, tmux < 2.7) hit the same erasure on any plain shrink, not just mid-drag. There is no clean fix: `TIOCGWINSZ` is a point-in-time snapshot and no terminal offers a "here's your size, reject my writes if it changed" handshake. If you can't self-size the frame and an occasional stale row matters less than never touching output above the spinner, leave `WithResizeDetection` off and take the artifacting.
+
+**Detection is lazy either way.** The width is re-read only when the spinner next draws - a ticker redraw, a `Write` to `pair.Standard`, `SetFrame`, or `Start`. With no ticker, a resize doesn't take effect until your next push.
+
+To build the width source by hand instead of `DefaultGetWidth`: a `getWidth` (see `WidthFromFile`), wrapped in `CachedGetWidth` so the syscall fires only on a real `SIGWINCH` rather than every frame, then shaped with `Portion` / `Offset` / `Clamp`.
 
 ## Staying resilient across write errors
 
@@ -384,7 +420,7 @@ go func() {
 
 ## Design
 
-spinq is actor-based: a single goroutine owns all spinner state, and every public method talks to it over a channel. The one exception worth knowing: `Start`'s initial frame, `StopNoClear`'s final frame, and a running `Set`'s redraw all fetch synchronously inside the actor, so a slow `FrameFunc` there blocks that call, any other `Start`/`Stop*`/`Set`/`Close` made concurrently on the same `Writer`, and `Close` itself - a plain `Write` is unaffected. A panic inside `FrameFunc` is recovered, reported on `Err()` as a `PanicError`, and never crashes the process or stops the spinner.
+spinq is actor-based: a single goroutine owns all spinner state, and every public method talks to it over a channel. The one exception worth knowing: `Start`'s initial frame, `StopNoClear`'s final frame, and a running `SetFrame`'s redraw all fetch synchronously inside the actor, so a slow `FrameFunc` there blocks that call, any other `Start`/`Stop*`/`SetFrame`/`SetTicker`/`Close` made concurrently on the same `Writer`, and `Close` itself - a plain `Write` is unaffected. A panic inside `FrameFunc` is recovered, reported on `Err()` as a `PanicError`, and never crashes the process or stops the spinner.
 
 `Close` joins the actor's own goroutine, but not every short-lived goroutine spinq spawns along the way (a per-`Start` context watcher, the tail of a tick-triggered fetch) - those are cancelled, not joined, so nothing guarantees they've exited yet, though none do user-visible work by that point.
 

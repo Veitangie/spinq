@@ -16,7 +16,10 @@ var graphemeOpts = displaywidth.Options{
 	ControlSequences: true,
 }
 
-var clearPrevLine = append([]byte(lineUp), ClearLineBytes...)
+var (
+	clearLineBytes = []byte(ClearLine)
+	clearPrevLine  = append([]byte(lineUp), clearLineBytes...)
+)
 
 type clearerDrawer interface {
 	clear(*spinnerState) error
@@ -32,7 +35,7 @@ var _ clearerDrawer = obliviousClearerDrawer{}
 func (obliviousClearerDrawer) clear(st *spinnerState) error {
 	if st.needClear {
 		st.needClear = false
-		_, err := st.wrapped.Write(ClearLineBytes)
+		_, err := st.wrapped.Write(clearLineBytes)
 		return err
 	}
 	return nil
@@ -67,7 +70,7 @@ func (a *awareClearerDrawer) clear(st *spinnerState) error {
 
 	if st.needClear {
 		st.needClear = false
-		_, err := st.wrapped.Write(ClearLineBytes)
+		_, err := st.wrapped.Write(clearLineBytes)
 		return err
 	}
 	return nil
@@ -113,7 +116,7 @@ func (a *awareClearerDrawer) clearMess(st *spinnerState) error {
 	totalSeq := bytes.Buffer{}
 	for curLine := range linesToClear {
 		if curLine == 0 {
-			_, _ = totalSeq.Write(ClearLineBytes)
+			_, _ = totalSeq.Write(clearLineBytes)
 		} else {
 			_, _ = totalSeq.Write(clearPrevLine)
 		}
@@ -130,29 +133,5 @@ func (a *awareClearerDrawer) adjust(st *spinnerState) {
 		return
 	}
 
-	iter := graphemeOpts.BytesGraphemes(st.frame)
-	total := 0
-	canTakeMore := true
-	result := bytes.Buffer{}
-	for iter.Next() {
-		size := iter.Width()
-		cur := iter.Value()
-
-		if size == 0 {
-			result.Write(cur)
-			continue
-		}
-		if !canTakeMore {
-			continue
-		}
-
-		if total+size <= a.width {
-			total += size
-			result.Write(cur)
-			continue
-		}
-		canTakeMore = false
-	}
-
-	a.visible = result.Bytes()
+	a.visible = crop(a.width, st.frame)
 }

@@ -93,6 +93,25 @@ func TestProgress_NonPositiveTotalReturnsErrNoFrame(t *testing.T) {
 	}
 }
 
+func TestProgress_NilFuncsReturnNoop(t *testing.T) {
+	render := func(current, total int) []byte { return []byte("x") }
+	progress := func() (int, int) { return 1, 10 }
+
+	for name, f := range map[string]FrameFunc{
+		"nil progress": Progress(nil, render),
+		"nil render":   Progress(progress, nil),
+		"both nil":     Progress(nil, nil),
+	} {
+		got, err := f()
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("%s: expected an empty frame, got %q", name, got)
+		}
+	}
+}
+
 func TestProgress_CurrentGreaterThanTotalReturnsErrNoFrame(t *testing.T) {
 	called := false
 	render := func(current, total int) []byte {
@@ -930,5 +949,113 @@ func TestDynamic_PropagatesInnerFrameFuncError(t *testing.T) {
 
 	if _, err := f(); !errors.Is(err, wantErr) {
 		t.Errorf("expected error %v, got %v", wantErr, err)
+	}
+}
+
+func TestCropToWidth_NilSourceYieldsNoop(t *testing.T) {
+	var got []byte
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("CropToWidth(nil)(40)() panicked: %v", r)
+			}
+		}()
+		got, err = CropToWidth(nil)(40)()
+	}()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected a nil source to fall back to Noop, got %q", got)
+	}
+}
+
+func TestCropToWidth_CropsPlainTextToWidth(t *testing.T) {
+	got, err := CropToWidth(staticFrame([]byte("hello world")))(5)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("expected %q, got %q", "hello", got)
+	}
+}
+
+func TestCropToWidth_WidthCoveringTheWholeFrameLeavesItUnchanged(t *testing.T) {
+	const frame = "hello"
+	got, err := CropToWidth(staticFrame([]byte(frame)))(80)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != frame {
+		t.Errorf("expected the frame unchanged (%q), got %q", frame, got)
+	}
+}
+
+func TestCropToWidth_CountsDisplayCellsNotBytes(t *testing.T) {
+	// Each CJK glyph is two cells: width 5 fits 你好 (4) but not 世 (would be 6).
+	got, err := CropToWidth(staticFrame([]byte("你好世界")))(5)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "你好" {
+		t.Errorf("expected %q, got %q", "你好", got)
+	}
+}
+
+func TestCropToWidth_KeepsZeroWidthSequencesPastTheLimit(t *testing.T) {
+	got, err := CropToWidth(staticFrame([]byte("\033[31mhello\033[0m")))(3)()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if w := graphemeOpts.String(string(got)); w != 3 {
+		t.Errorf("expected 3 visible cells, got %d (%q)", w, got)
+	}
+	if !strings.HasSuffix(string(got), "\033[0m") {
+		t.Errorf("expected the trailing reset to survive the crop, got %q", got)
+	}
+}
+
+func TestCropToWidth_NonPositiveWidthLeavesOnlyZeroWidthContent(t *testing.T) {
+	for _, w := range []int{0, -5} {
+		got, err := CropToWidth(staticFrame([]byte("\033[31mhi\033[0m")))(w)()
+		if err != nil {
+			t.Fatalf("width %d: unexpected error: %v", w, err)
+		}
+		if vis := graphemeOpts.String(string(got)); vis != 0 {
+			t.Errorf("width %d: expected 0 visible cells, got %d (%q)", w, vis, got)
+		}
+		if string(got) != "\033[31m\033[0m" {
+			t.Errorf("width %d: expected both escapes preserved, got %q", w, got)
+		}
+	}
+}
+
+func TestCropToWidth_PropagatesSourceError(t *testing.T) {
+	wantErr := errors.New("boom")
+	if _, err := CropToWidth(errorFrame(wantErr))(10)(); !errors.Is(err, wantErr) {
+		t.Errorf("expected error %v, got %v", wantErr, err)
+	}
+}
+
+func TestCropToWidth_ReCropsAsWidthChangesUnderDynamic(t *testing.T) {
+	width := 3
+	f := Dynamic(func() int { return width }, CropToWidth(staticFrame([]byte("abcdefgh"))))
+
+	got, err := f()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "abc" {
+		t.Errorf("width 3: expected %q, got %q", "abc", got)
+	}
+
+	width = 6
+	got, err = f()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "abcdef" {
+		t.Errorf("width 6: expected %q, got %q", "abcdef", got)
 	}
 }

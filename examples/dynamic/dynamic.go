@@ -16,7 +16,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	resizeOpt, getWidth, err := spinq.WrapDefaultResizeDetection(ctx)
+	getWidth, err := spinq.DefaultGetWidth(ctx)
 	if err != nil {
 		fmt.Printf("Failed to detect terminal width: %s\n", err.Error())
 		os.Exit(1)
@@ -33,7 +33,11 @@ func main() {
 	)
 	getFrame := spinq.Progress(func() (int, int) { return int(count.Load()), total }, render)
 
-	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond), resizeOpt)
+	// No resize option: DynamicBarRender fits the bar itself, so every clear
+	// stays one row. See the "On resizing" section of the README for when
+	// you'd want spinq.WrapWithResizeDetection instead - and why you usually
+	// don't.
+	p, err := spinq.WrapOS(ctx, getFrame, spinq.Every(100*time.Millisecond))
 	if err != nil {
 		fmt.Printf("Failed to start spinner: %s\n", err.Error())
 		os.Exit(1)

@@ -112,7 +112,6 @@ func (st *spinnerState) start(ctx context.Context) error {
 	select {
 	case err := <-msg.notify:
 		if err == nil {
-			err = nil
 			go func() {
 				select {
 				case <-ctx.Done():
@@ -173,6 +172,22 @@ func (st *spinnerState) setGetFrame(getFrame FrameFunc) error {
 	select {
 	case err := <-msg.notify:
 		return err
+	case <-st.ctx.Done():
+		return ErrClosed
+	}
+}
+
+func (st *spinnerState) setTicker(ticker <-chan time.Time) error {
+	msg := setTicker{ticker: ticker, notify: make(chan struct{})}
+	select {
+	case st.task <- msg:
+	case <-st.ctx.Done():
+		return ErrClosed
+	}
+
+	select {
+	case <-msg.notify:
+		return nil
 	case <-st.ctx.Done():
 		return ErrClosed
 	}

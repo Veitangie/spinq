@@ -526,7 +526,11 @@ func SmoothBarRender(length int, opts ...SmoothBarOptionsFunc) RenderFunc {
 // cells wide (a hair less when length isn't a whole multiple of a
 // multi-cell glyph), with a single fixed divider glyph at the boundary
 // between filled and empty (see BarWithDivider). It renders at a constant
-// width across every progress level, including 100%.
+// width across every progress level, including 100%: unlike
+// SmoothBarRender, the divider is drawn unconditionally at every level,
+// including exactly 0% and exactly 100% - it marks the boundary itself
+// rather than measuring a partially-filled cell, so there is no level at
+// which it would need to be dropped.
 //
 // It returns NoopRender if length leaves no room for the bar, or if Full
 // and Empty don't render at the same width.

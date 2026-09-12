@@ -18,6 +18,7 @@ func Every(d time.Duration) <-chan time.Time {
 	if d <= 0 {
 		return nil
 	}
+	// Requires go1.23+ in order not to leak resources, cannot go lower.
 	return time.NewTicker(d).C
 }
 

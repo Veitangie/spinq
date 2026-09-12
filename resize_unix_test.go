@@ -15,7 +15,8 @@ import (
 )
 
 func TestDefaultSigwinch_FiresOnRealSignal(t *testing.T) {
-	ctx := t.Context()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	sigwinch := DefaultSigwinch(ctx)
 
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGWINCH); err != nil {

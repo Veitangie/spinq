@@ -278,13 +278,15 @@ func TestCachedGetWidth_SafeForConcurrentReads(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 20 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for range 100 {
 				if got := live(); got != 80 {
 					t.Errorf("expected 80, got %d", got)
 				}
 			}
-		})
+		}()
 	}
 	wg.Wait()
 }

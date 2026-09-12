@@ -9,9 +9,15 @@
 ![Release Version](https://img.shields.io/github/v/release/Veitangie/spinq?include_prereleases&logo=github)
 [![Go Reference](https://pkg.go.dev/badge/veitangie.dev/spinq.svg)](https://pkg.go.dev/veitangie.dev/spinq)
 
-A small, focused, actor-based terminal spinner and progress-bar library for Go - no TUI framework underneath, just the spinner, the bar, and resize-aware rendering.
+A small-footprint, focused, actor-based terminal spinner and progress-bar library for Go - no TUI framework underneath, just the spinner, the bar, and resize-aware rendering.
 
 ## See it in action
+
+The problem this solves, not just the output it produces - two programs writing to the same terminal, one coordinating its streams and one not:
+
+![Corrupted vs. coordinated terminal output](https://raw.githubusercontent.com/Veitangie/assets/main/demos/spinq/comparison.gif)
+
+That's the failure mode. Here's the everyday case - a plain spinner, nothing coordinating with it because nothing else is writing:
 
 ![Simple spinner demo](examples/simple/simple.gif)
 
@@ -188,56 +194,16 @@ func main() {
 
 All three examples live in [`examples/`](examples/) and run as-is with `go run .`.
 
-## Why spinq exists
+## Footprint
 
-Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
+spinq's own footprint is 648 KB (stripped-binary delta over an empty Go program) - see the full breakdown against other spinner/progress-bar libraries below.
 
-- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq imports four packages at runtime, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) (built on [`uax29`](https://github.com/clipperhouse/uax29)'s grapheme-cluster segmentation) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. `go.mod` also lists `creack/pty` as a direct dependency - that's test-only tooling for the PTY-backed test suite, never imported by spinq itself. Everything else is standard library.
-
-- **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinner` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
-
-If none of that matters for your use case, you probably don't need spinq - plenty of other great options exist. If it does, spinq was made to solve exactly these problems.
-
-## What spinq does not do
-
-spinq is meant to stay small and easy to use, so it comes with some restrictions:
-
-- **No raw/true TTY mode.** spinq never puts the terminal into raw mode, never reads input, and isn't a TUI framework. It's a simple ANSI-writing `io.Writer`. For when you need something to just spin.
-
-- **No automatic width detection.** Bar widths are explicit `int` arguments - spinq never queries the terminal size on its own. Responsive bars are opt-in; see [On resizing](#on-resizing).
-
-- **No multiline or multi-bar dashboards.** spinq can only manage one line. If you want several concurrent progress bars stacked on screen, spinq is not a good choice.
-
-- **Minimal terminal capability negotiation.** Detection is `isatty`-based (a real terminal vs. redirected/piped output, including Cygwin/MSYS2 ptys) rather than terminfo/termcap parsing or fallback rendering for genuinely non-ANSI terminals - though output is wrapped through `go-colorable` on Windows, so ANSI sequences render correctly there too instead of printing as literal escape-code garbage.
-
-## When something else is a better fit
-
-spinq is scoped deliberately narrow - see above. That's not the right shape for every job, so here's when each popular alternative is a better pick: what it has that spinq doesn't, and what of spinq's you'd be giving up (or simply don't need) to get it.
-
-- **[briandowns/spinner](https://github.com/briandowns/spinner)** - you want a spinner only, nothing else, at the smallest possible dependency footprint, with 90+ built-in character sets to pick from. You don't need a progress bar, resize-aware rendering, or spinq's stdout/stderr write coordination.
-
-- **[pin](https://github.com/yarlson/pin)** - same spinner-only scope as briandowns/spinner, at a similarly small footprint, with colors, spinner/text/prefix positioning, and named success/failure stop methods built in. You still don't need a progress bar or spinq's stdout/stderr coordination.
-
-- **[yacspin](https://github.com/theckman/yacspin)** - same spinner-only scope, with more built-in behavior still: automatic padding so the animation's width doesn't shift surrounding text, plus its own named success/failure stop methods instead of composing your own final message via `StopWith`. You still don't need a progress bar or spinq's stdout/stderr coordination.
-
-- **[mpb](https://github.com/vbauerster/mpb)** - you need more than one progress bar on screen at once - a parallel download manager, several workers each with their own bar. spinq explicitly manages a single line only; mpb is built around multiple bars added and removed dynamically, with decorator column widths kept in sync across all of them.
-
-- **[cheggaaa/pb](https://github.com/cheggaaa/pb)** - similar multi-bar territory (it calls this a pool), plus built-in `io.Reader`/`io.Writer` wrapping so a bar tracks bytes read or written from a stream without you wiring up a counter yourself, and byte-unit formatting (KiB/MiB/...) out of the box.
-
-- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~4.6x heavier (see the [full comparison](#footprint-comparison) below for the rest of these).
-
-- **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
-
-- **[bubbletea](https://github.com/charmbracelet/bubbletea)** (with [bubbles](https://github.com/charmbracelet/bubbles) for its spinner/progress components) - you're building an actual interactive terminal application: keyboard/mouse input, multiple views, real application state - not decorating a linear CLI's output while it runs in the background. spinq is deliberately not a TUI framework (see above); bubbletea is exactly that.
-
-(Footprint delta above is stripped-binary size, `-ldflags="-s -w"`, measured against an empty Go program on the same toolchain - directional, not a promise that will hold across every version of either library.)
-
-If what you want is a spinner and/or a single-line progress bar, coordinated with your program's normal stdout/stderr output, without adopting a TUI framework - that's the case spinq is built for.
+In practice, `JustStart` plus a handful of `With*` options covers most uses, and `Progress` plus `BarRender` covers the rest - about ten identifiers out of the package's ~198 exported ones (see [Quick start](#quick-start)). The other ~188 are presets, composable primitives, and [lower-level entry points](#lower-level-entry-points): there for when you need them, not something you need to read through up front.
 
 <details id="footprint-comparison">
-<summary>Full size comparison, if you want the numbers behind "roughly Nx heavier"</summary>
+<summary>Full size comparison against every alternative mentioned below</summary>
 
-Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in this section, each at its latest tagged release. This isn't cherry-picked to flatter spinq - two of the alternatives below are genuinely smaller (bare spinners, nothing else):
+Same methodology as the footnote above (stripped-binary delta over an empty Go program), run across every library mentioned in the "[When something else is a better fit](#when-something-else-is-a-better-fit)" section, each at its latest tagged release. This isn't cherry-picked to flatter spinq - two of the alternatives below are genuinely smaller (bare spinners, nothing else):
 
 | library | version | scope | delta | vs. spinq |
 |---|---|---|---:|---:|
@@ -255,6 +221,60 @@ Read this as directional, not a permanent ranking - each library's own dependenc
 
 </details>
 
+## Why spinq exists
+
+Every existing Go spinner library I looked at made me choose between "too heavy" and "actually going to corrupt my output eventually." Specifically:
+
+- **Too heavy.** Some pull in sizable dependency trees, or arrive bundled as part of a larger TUI framework I didn't ask for. spinq imports four packages at runtime, each earning its keep: [`go-colorable`](https://github.com/mattn/go-colorable) and [`go-isatty`](https://github.com/mattn/go-isatty) for Windows ANSI support and terminal detection, [`displaywidth`](https://github.com/clipperhouse/displaywidth) (built on [`uax29`](https://github.com/clipperhouse/uax29)'s grapheme-cluster segmentation) for correct grapheme-aware cell-width math (so bars, dividers, and cropped frames line up correctly with wide/multi-byte glyphs and ANSI codes), and `golang.org/x/term` for terminal-size queries. `go.mod` also lists `creack/pty` as a direct dependency - that's test-only tooling for the PTY-backed test suite, never imported by spinq itself. Everything else is standard library.
+
+- **Corrupting the other stream.** Most libraries only ever manage the stream they spin on, and never account for the fact that your program's *other* stream shares the same physical terminal. Print to stdout while a spinner animates on stderr, and you can still get visual corruption on screen, or even get your written data deleted off the screen. spinq avoids this by giving you two independently addressable writers instead of one: `pair.Standard` and `pair.Spinner` can point at different streams (or the same one), stay separately pipeable/redirectable, and spinq coordinates between them internally instead of only managing the one it spins on. At the time of writing (August 2026) I didn't manage to find a single lightweight library that prevented this risk.
+
+If none of that matters for your use case, you probably don't need spinq - plenty of other great options exist. If it does, spinq was made to solve exactly these problems.
+
+spinq was extracted out of a CLI tool I built and use daily - which is also why a library with no stars to its name ships a PTY-backed test suite and a size comparison table: it was already held to that bar internally before it was ever a standalone package.
+
+## What spinq does not do
+
+spinq is meant to stay small and easy to use, so it comes with some restrictions:
+
+- **No raw/true TTY mode.** spinq never puts the terminal into raw mode, never reads input, and isn't a TUI framework. It's a simple ANSI-writing `io.Writer`. For when you need something to just spin.
+
+- **No automatic width detection.** Bar widths are explicit `int` arguments - spinq never queries the terminal size on its own. Responsive bars are opt-in; see [On resizing](#on-resizing).
+
+- **No multiline or multi-bar dashboards.** spinq can only manage one line. If you want several concurrent progress bars stacked on screen, spinq is not a good choice.
+
+- **Minimal terminal capability negotiation.** Detection is `isatty`-based (a real terminal vs. redirected/piped output, including Cygwin/MSYS2 ptys) rather than terminfo/termcap parsing or fallback rendering for genuinely non-ANSI terminals - though output is wrapped through `go-colorable` on Windows, so ANSI sequences render correctly there too instead of printing as literal escape-code garbage.
+
+The answer to "why doesn't spinq do X" is usually "here's the primitive, X is yours" - the surface above is building material, not a closed list of finished behaviors. Odd-width center-out fill, for instance, isn't a builtin - it falls out of two opposite-direction bars joined into one render, the same composability [Composing frames](#composing-frames) describes for spinner frames applied to progress bars instead:
+
+```go
+spinq.JoinRender("", spinq.BarRender(n, spinq.BarWithDirection(spinq.Left)), spinq.BarRender(n))
+```
+
+## When something else is a better fit
+
+spinq is scoped deliberately narrow - see above. That's not the right shape for every job, so here's when each popular alternative is a better pick: what it has that spinq doesn't, and what of spinq's you'd be giving up (or simply don't need) to get it.
+
+- **[briandowns/spinner](https://github.com/briandowns/spinner)** - you want a spinner only, nothing else, at the smallest possible dependency footprint, with 90+ built-in character sets to pick from. You don't need a progress bar, resize-aware rendering, or spinq's stdout/stderr write coordination.
+
+- **[pin](https://github.com/yarlson/pin)** - same spinner-only scope as briandowns/spinner, at a similarly small footprint, with colors, spinner/text/prefix positioning, and named success/failure stop methods built in. You still don't need a progress bar or spinq's stdout/stderr coordination.
+
+- **[yacspin](https://github.com/theckman/yacspin)** - same spinner-only scope, with more built-in behavior still: automatic padding so the animation's width doesn't shift surrounding text, plus its own named success/failure stop methods instead of composing your own final message via `StopWith`. You still don't need a progress bar or spinq's stdout/stderr coordination.
+
+- **[mpb](https://github.com/vbauerster/mpb)** - you need more than one progress bar on screen at once - a parallel download manager, several workers each with their own bar. spinq explicitly manages a single line only; mpb is built around multiple bars added and removed dynamically, with decorator column widths kept in sync across all of them.
+
+- **[cheggaaa/pb](https://github.com/cheggaaa/pb)** - similar multi-bar territory (it calls this a pool), plus built-in `io.Reader`/`io.Writer` wrapping so a bar tracks bytes read or written from a stream without you wiring up a counter yourself, and byte-unit formatting (KiB/MiB/...) out of the box.
+
+- **[schollz/progressbar](https://github.com/schollz/progressbar)** - you want a single bar capable of turning itself into a spinner automatically when the total is unknown. You don't need spinq's stdout/stderr coordination or its smaller footprint - schollz/progressbar runs roughly ~4.6x heavier (see the [full comparison](#footprint-comparison) for the rest of these).
+
+- **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
+
+- **[bubbletea](https://github.com/charmbracelet/bubbletea)** (with [bubbles](https://github.com/charmbracelet/bubbles) for its spinner/progress components) - you're building an actual interactive terminal application: keyboard/mouse input, multiple views, real application state - not decorating a linear CLI's output while it runs in the background. spinq is deliberately not a TUI framework (see above); bubbletea is exactly that.
+
+(Footprint delta above is stripped-binary size, `-ldflags="-s -w"`, measured against an empty Go program on the same toolchain - directional, not a promise that will hold across every version of either library.)
+
+If what you want is a spinner and/or a single-line progress bar, coordinated with your program's normal stdout/stderr output, without adopting a TUI framework - that's the case spinq is built for. See [Footprint](#footprint) above for the numbers behind "roughly Nx heavier."
+
 ## Install
 
 ```sh
@@ -267,7 +287,7 @@ Requires the Go version declared in `go.mod` (not covered by SemVer - see [Versi
 
 spinq follows semantic versioning, judged strictly from the calling code's perspective:
 
-- **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior (e.g. `SigwinchFromPoller` returning a literal `nil` channel for a non-positive duration - unusable the moment a caller ranges over it - instead of an already-closed one, matching every other degenerate-input case in the package), adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
+- **Patch** - invisible to any consumer, even if it touches exported types under the hood. Fixing undefined behavior, adding new internal implementation, hardening against a crash that should never have been reachable - all patches.
 - **Minor** - additive: everything that already compiled keeps compiling and behaving the same. A new optional parameter via `...T`, a new method, a new exported function or type.
 - **Major** - anything that breaks compilation for existing callers - a changed signature on an existing exported function or method - or breaks an existing behavioral contract even without a signature change, such as a guarantee spinq previously made and no longer keeps. As Go modules require, a major bump also gets a new import path (`veitangie.dev/spinq/v2`, and so on).
 
@@ -339,6 +359,8 @@ defer pair.Spinner.Close()
 
 `BarRender` ships a handful of presets (`BarWithRoundedPreset`, `BarWithShadePreset`, `BarWithDotPreset`, `BarWithMinimalPreset`, `BarWithThinPreset`), or takes functional options (`BarWithFull`, `BarWithDivider`, `BarWithDirection`, ...) to build your own. `SmoothBarRender` (sub-cell precision, for smoother fill) has its own preset set instead (`SmoothWithSnakePreset`, `SmoothWithBraillePreset`, `SmoothWithPiePreset`, `SmoothWithDotPreset`, `SmoothWithShadePreset`), plus the matching `SmoothWith*` functional options.
 
+The two families aren't "fewer vs. more precision" - their dividers answer different questions. `BarRender`'s divider marks *where* the boundary is: a single fixed glyph inserted at the edge, free to be any width or character, because it's just a marker. `SmoothBarRender`'s divider *measures* how far into the boundary cell the fill has progressed, picked from an ordered, matched-width glyph set (`SmoothWithDivider`) running from emptiest to fullest. That's why only `SmoothWithDivider` carries width and ordering invariants, and why `BarRender`/`SmoothBarRender` are two separate render families rather than one option apart.
+
 ## Composing frames
 
 `JustStart`'s own default frame is just ordinary composition of the smaller primitives - nothing it does is unavailable to you:
@@ -373,7 +395,7 @@ Every layer takes `WrapOptionsFunc`s (`JustStart` takes the equivalent `JustStar
 
 spinq never queries the terminal size on its own - bar widths are explicit `int`s. Responsive bars are opt-in, and there are two ways to get one.
 
-**Self-sizing frame (recommended).** Build the frame with `Dynamic` / `DynamicBarRender` / `DynamicSmoothBarRender`, sized by a cached width source: `spinq.DefaultGetWidth(ctx)` (`os.Stderr` + real `SIGWINCH`, or a poller on Windows), or the `getWidth` handed back by `WrapDefaultResizeDetection` / `DefaultResizeDetection`. Shape it with `Portion` / `Offset` / `Clamp` (half the terminal, minus room for a label, bounded to a sane range). Do **not** also pass `WithResizeDetection` / `WrapWithResizeDetection`: the frame re-sizes itself on every tick, and every clear stays a single `\r\033[K` that only ever touches the cursor's own row - it cannot corrupt anything. Worst case, a width you miscalculated overflows the line and leaves one stale row above the spinner; that's cosmetic and clears itself once the frame fits again.
+**Self-sizing frame (recommended).** Build the frame with `Dynamic` / `DynamicBarRender` / `DynamicSmoothBarRender`, sized by a cached width source: `spinq.DefaultGetWidth(ctx)` (`os.Stderr` + real `SIGWINCH`, or a poller on Windows), or the `getWidth` handed back by `WrapDefaultResizeDetection` / `DefaultResizeDetection`. Shape it with `Portion` / `Offset` / `Clamp` (half the terminal, minus room for a label, bounded to a sane range). Do **not** also pass `WithResizeDetection` / `WrapWithResizeDetection`: the frame re-sizes itself on every tick, and every clear stays a single `\r\033[K` that only ever touches the cursor's own row - it cannot corrupt anything. Worst case, a width you miscalculated overflows the line and leaves a stale row above the spinner; the cursor never walks back up to reclaim it, so it doesn't clear itself, and repeated resizes can leave more than one. Those rows persist until scrollback pushes them off, but they only ever consist of the spinner's own past output - never your application's data.
 
 ```go
 getWidth, err := spinq.DefaultGetWidth(ctx)

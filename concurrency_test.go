@@ -77,16 +77,20 @@ func TestConcurrentSetFrameAndWrite(t *testing.T) {
 	for i := range 100 {
 		frame := frames[i%len(frames)]
 
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if err := pair.Spinner.SetFrame(staticFrame(frame)); err != nil {
 				t.Errorf("set error: %v", err)
 			}
-		})
-		wg.Go(func() {
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if _, err := pair.Standard.Write([]byte("x\n")); err != nil {
 				t.Errorf("write error: %v", err)
 			}
-		})
+		}()
 	}
 	if !waitTimeout(&wg, 5*time.Second) {
 		t.Fatalf("concurrent SetFrame/Write deadlocked instead of completing — goroutine dump:\n%s", dumpGoroutines())
@@ -122,14 +126,18 @@ func TestConcurrentTicksAndWrites(t *testing.T) {
 	}()
 
 	var ops sync.WaitGroup
-	ops.Go(func() {
+	ops.Add(1)
+	go func() {
+		defer ops.Done()
 		for range 200 {
 			if _, err := pair.Standard.Write([]byte("tick\n")); err != nil {
 				t.Errorf("write error: %v", err)
 			}
 		}
-	})
-	ops.Go(func() {
+	}()
+	ops.Add(1)
+	go func() {
+		defer ops.Done()
 		for i := range 200 {
 			if i%2 == 0 {
 				_ = pair.Spinner.SetTicker(make(chan time.Time))
@@ -138,7 +146,7 @@ func TestConcurrentTicksAndWrites(t *testing.T) {
 			}
 		}
 		_ = pair.Spinner.SetTicker(ticker)
-	})
+	}()
 
 	ops.Wait()
 	close(stopTicks)
@@ -168,16 +176,20 @@ func TestConcurrentStartStop(t *testing.T) {
 	var panics int32
 	var wg sync.WaitGroup
 	for range 50 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if r := runRecovered(func() { _ = pair.Spinner.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
-		})
-		wg.Go(func() {
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if r := runRecovered(func() { _ = pair.Spinner.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
-		})
+		}()
 	}
 
 	if !waitTimeout(&wg, 5*time.Second) {
@@ -203,21 +215,27 @@ func TestConcurrentStartStopWithWrites(t *testing.T) {
 	var panics int32
 	var wg sync.WaitGroup
 	for range 30 {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if r := runRecovered(func() { _ = pair.Spinner.Start(ctx) }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
-		})
-		wg.Go(func() {
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if r := runRecovered(func() { _ = pair.Spinner.Stop() }); r != nil {
 				atomic.AddInt32(&panics, 1)
 			}
-		})
-		wg.Go(func() {
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			if _, err := pair.Standard.Write([]byte("x\n")); err != nil {
 				t.Errorf("write error: %v", err)
 			}
-		})
+		}()
 	}
 
 	if !waitTimeout(&wg, 5*time.Second) {
@@ -649,7 +667,9 @@ func TestStress_1000GoroutinesMixedOperationsWithFaultyInputs(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range goroutines {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					panicsEscaped.Add(1)
@@ -675,7 +695,7 @@ func TestStress_1000GoroutinesMixedOperationsWithFaultyInputs(t *testing.T) {
 					_ = pair.Spinner.SetTicker(ticker)
 				}
 			}
-		})
+		}()
 	}
 
 	deadlocked := !waitTimeout(&wg, 15*time.Second)
@@ -709,7 +729,9 @@ func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case <-stop:
@@ -718,7 +740,7 @@ func TestConcurrentStopNoClearVsFailingWrite_NoDataRace(t *testing.T) {
 				_, _ = pair.Spinner.Write([]byte("x\n"))
 			}
 		}
-	})
+	}()
 
 	for range 2000 {
 		_ = pair.Spinner.StopNoClear("")

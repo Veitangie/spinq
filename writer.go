@@ -29,9 +29,22 @@ import (
 //     the display, optionally followed by a raw suffix; a failed fetch
 //     leaves the previous frame untouched instead of blanking it.
 //   - SetFrame installs a new FrameFunc. While running, it also fetches
-//     and draws from it synchronously before returning. While stopped,
-//     it only stores the FrameFunc - nothing is drawn until the next
-//     Start.
+//     and draws from it - synchronously before returning if the previous
+//     write ended in a newline, deferred until one does otherwise (spinq
+//     never draws mid-line over unfinished output). While stopped, it
+//     only stores the FrameFunc - nothing is drawn until the next Start.
+//   - SetFrameWith installs a new FrameFunc like SetFrame, but first
+//     clears and writes a message: preceded by a newline if the previous
+//     write hadn't ended in one, and itself forced to end in one if it
+//     doesn't already, so the new frame always starts its own line. The
+//     new frame then draws the same way SetFrame's does.
+//   - SetFrameNoClear installs a new FrameFunc like SetFrame, but first
+//     commits the outgoing frame plus a suffix to the display without
+//     clearing - refetching the outgoing frame fresh if it's changed, or
+//     if nothing currently on screen reflects it (e.g. after a mid-line
+//     write already cleared it away without a redraw). Same
+//     newline handling as SetFrameWith. The new frame then draws the
+//     same way SetFrame's does.
 //   - SetTicker replaces the ticker driving redraws, running or not. A
 //     nil or closed ticker stops periodic redraws - the frame then
 //     updates only on Write/SetFrame/Start or a later SetTicker to a
@@ -69,6 +82,8 @@ type Writer interface {
 	StopWith(string) error
 	StopNoClear(string) error
 	SetFrame(FrameFunc) error
+	SetFrameWith(FrameFunc, string) error
+	SetFrameNoClear(FrameFunc, string) error
 	SetTicker(<-chan time.Time) error
 	IsLive() bool
 	GetWidth() WidthFunc
@@ -97,6 +112,10 @@ func (WriterPassthrough) StopWith(string) error { return nil }
 func (WriterPassthrough) StopNoClear(string) error { return nil }
 
 func (WriterPassthrough) SetFrame(FrameFunc) error { return nil }
+
+func (WriterPassthrough) SetFrameWith(FrameFunc, string) error { return nil }
+
+func (WriterPassthrough) SetFrameNoClear(FrameFunc, string) error { return nil }
 
 func (WriterPassthrough) SetTicker(<-chan time.Time) error { return nil }
 
@@ -128,7 +147,6 @@ func (sw writerReal) Write(data []byte) (int, error) {
 	defer sw.st.writerMut.Unlock()
 
 	if clearErr := sw.st.clear(); clearErr != nil {
-		sw.st.frame = []byte{}
 		var msg any = reportError{fmt.Errorf("failed to clear writer: %w", clearErr)}
 		go fireEvent(msg, sw.st.task)
 	}
@@ -141,7 +159,6 @@ func (sw writerReal) Write(data []byte) (int, error) {
 	}
 
 	if drawErr := sw.st.draw(); drawErr != nil {
-		sw.st.frame = []byte{}
 		var msg any = reportError{fmt.Errorf("failed to draw spinner back: %w", drawErr)}
 		go fireEvent(msg, sw.st.task)
 	}
@@ -166,6 +183,14 @@ func (sw writerReal) StopNoClear(message string) error {
 
 func (sw writerReal) SetFrame(getFrame FrameFunc) error {
 	return sw.st.setGetFrame(getFrame)
+}
+
+func (sw writerReal) SetFrameWith(getFrame FrameFunc, message string) error {
+	return sw.st.setGetFrameWith(getFrame, message)
+}
+
+func (sw writerReal) SetFrameNoClear(getFrame FrameFunc, message string) error {
+	return sw.st.setGetFrameNoClear(getFrame, message)
 }
 
 func (sw writerReal) SetTicker(ticker <-chan time.Time) error {

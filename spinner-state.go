@@ -162,7 +162,19 @@ func (st *spinnerState) commonStop(msg stop) error {
 }
 
 func (st *spinnerState) setGetFrame(getFrame FrameFunc) error {
-	msg := setGetFrame{getFrame: getFrame, notify: make(chan error, 1)}
+	return st.commonSetGetFrame(setGetFrame{getFrame: getFrame, clear: true})
+}
+
+func (st *spinnerState) setGetFrameWith(getFrame FrameFunc, message string) error {
+	return st.commonSetGetFrame(setGetFrame{lastFrame: []byte(message), getFrame: getFrame, clear: true})
+}
+
+func (st *spinnerState) setGetFrameNoClear(getFrame FrameFunc, suffix string) error {
+	return st.commonSetGetFrame(setGetFrame{lastFrame: []byte(suffix), getFrame: getFrame, clear: false})
+}
+
+func (st *spinnerState) commonSetGetFrame(msg setGetFrame) error {
+	msg.notify = make(chan error, 1)
 	select {
 	case st.task <- msg:
 	case <-st.ctx.Done():

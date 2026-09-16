@@ -97,6 +97,45 @@ func TestConcurrentSetFrameAndWrite(t *testing.T) {
 	}
 }
 
+func TestConcurrentSetFrameNoClearAndWrite(t *testing.T) {
+	spinner := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("*")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
+
+	var wg sync.WaitGroup
+	for i := range 100 {
+		frame := []byte{byte('a' + i%4)}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := pair.Spinner.SetFrameNoClear(staticFrame(frame), "msg\n"); err != nil {
+				t.Errorf("set error: %v", err)
+			}
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := pair.Standard.Write([]byte("x\n")); err != nil {
+				t.Errorf("write error: %v", err)
+			}
+		}()
+	}
+	if !waitTimeout(&wg, 5*time.Second) {
+		t.Fatalf("concurrent SetFrameNoClear/Write deadlocked instead of completing — goroutine dump:\n%s", dumpGoroutines())
+	}
+}
+
 func TestConcurrentTicksAndWrites(t *testing.T) {
 	main := &syncBuffer{}
 	spinner := &syncBuffer{}

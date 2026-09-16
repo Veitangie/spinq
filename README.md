@@ -196,7 +196,7 @@ All three examples live in [`examples/`](examples/) and run as-is with `go run .
 
 ## Footprint
 
-spinq's own footprint is 648 KB (stripped-binary delta over an empty Go program) - see the full breakdown against other spinner/progress-bar libraries below.
+spinq's own footprint is 656 KB (`-ldflags="-s -w"`, measured against an empty Go program) - see the full breakdown against other spinner/progress-bar libraries below.
 
 In practice, `JustStart` plus a handful of `With*` options covers most uses, and `Progress` plus `BarRender` covers the rest - about ten identifiers out of the package's ~198 exported ones (see [Quick start](#quick-start)). The other ~188 are presets, composable primitives, and [lower-level entry points](#lower-level-entry-points): there for when you need them, not something you need to read through up front.
 
@@ -207,17 +207,17 @@ Same methodology as the footnote above (stripped-binary delta over an empty Go p
 
 | library | version | scope | delta | vs. spinq |
 |---|---|---|---:|---:|
-| [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.58x |
-| [pin](https://github.com/yarlson/pin) | v0.10.0 | bare spinner only, colored, zero deps | 436 KB | 0.67x |
-| **spinq** | **v1.0.0** | spinner + bar + resize-aware + grapheme-correct | **648 KB** | **1.00x** |
-| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.30x |
-| [mpb](https://github.com/vbauerster/mpb) | v8.16.1 | dedicated multi-progress-bar library | 1020 KB | 1.57x |
-| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1448 KB | 2.23x |
-| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1736 KB | 2.68x |
-| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2232 KB | 3.44x |
-| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.63x |
+| [briandowns/spinner](https://github.com/briandowns/spinner) | v1.23.2 | bare spinner only | 376 KB | 0.57x |
+| [pin](https://github.com/yarlson/pin) | v0.10.0 | bare spinner only, colored, zero deps | 436 KB | 0.66x |
+| **spinq** | **v1.1.0** | spinner + bar + resize-aware + grapheme-correct | **656 KB** | **1.00x** |
+| [yacspin](https://github.com/theckman/yacspin) | v0.13.12 | bare spinner only, configurable | 844 KB | 1.29x |
+| [mpb](https://github.com/vbauerster/mpb) | v8.16.1 | dedicated multi-progress-bar library | 1020 KB | 1.55x |
+| [pterm](https://github.com/pterm/pterm) | v0.12.83 | full styled-console toolkit | 1448 KB | 2.21x |
+| [bubbletea](https://github.com/charmbracelet/bubbletea) | v1.3.10 (+ [bubbles](https://github.com/charmbracelet/bubbles) v1.0.0) | Elm-architecture TUI framework | 1736 KB | 2.65x |
+| [cheggaaa/pb](https://github.com/cheggaaa/pb) | v3.2.1 | dedicated progress-bar library | 2232 KB | 3.40x |
+| [schollz/progressbar](https://github.com/schollz/progressbar) | v3.19.1 | dedicated progress-bar library | 3000 KB | 4.57x |
 
-Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured September 2026, same Go toolchain (go1.27.0) throughout.
+Read this as directional, not a permanent ranking - each library's own dependencies shift over time, and a newer or older version of any of these could land differently; the version column pins down exactly what was measured, so this can be reproduced or checked against by anyone. Measured September 2026, same Go toolchain (go1.27.1) throughout.
 
 </details>
 
@@ -270,8 +270,6 @@ spinq is scoped deliberately narrow - see above. That's not the right shape for 
 - **[pterm](https://github.com/pterm/pterm)** - a spinner or bar is only one piece of what you need. pterm is a full styled-console toolkit - tables, trees, prompts, select menus, panels, charts - and you want one consistent look across all of it rather than pairing spinq with separate libraries for the rest.
 
 - **[bubbletea](https://github.com/charmbracelet/bubbletea)** (with [bubbles](https://github.com/charmbracelet/bubbles) for its spinner/progress components) - you're building an actual interactive terminal application: keyboard/mouse input, multiple views, real application state - not decorating a linear CLI's output while it runs in the background. spinq is deliberately not a TUI framework (see above); bubbletea is exactly that.
-
-(Footprint delta above is stripped-binary size, `-ldflags="-s -w"`, measured against an empty Go program on the same toolchain - directional, not a promise that will hold across every version of either library.)
 
 If what you want is a spinner and/or a single-line progress bar, coordinated with your program's normal stdout/stderr output, without adopting a TUI framework - that's the case spinq is built for. See [Footprint](#footprint) above for the numbers behind "roughly Nx heavier."
 

@@ -43,7 +43,7 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         uses: actions/setup-go@v6
         with:
-          go-version-file: 'spinq/go.mod'
+          go-version: 'stable'
           cache: true
           cache-dependency-path: spinq/go.sum
 

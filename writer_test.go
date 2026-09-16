@@ -34,6 +34,12 @@ func TestWriterPassthrough_AllLifecycleMethodsAreNoOps(t *testing.T) {
 	if err := sw.SetFrame(staticFrame([]byte("x"))); err != nil {
 		t.Errorf("SetFrame: expected nil, got %v", err)
 	}
+	if err := sw.SetFrameWith(staticFrame([]byte("x")), "message"); err != nil {
+		t.Errorf("SetFrameWith: expected nil, got %v", err)
+	}
+	if err := sw.SetFrameNoClear(staticFrame([]byte("x")), "suffix"); err != nil {
+		t.Errorf("SetFrameNoClear: expected nil, got %v", err)
+	}
 	if err := sw.SetTicker(make(chan time.Time)); err != nil {
 		t.Errorf("SetTicker: expected nil, got %v", err)
 	}
@@ -755,6 +761,29 @@ func TestStop_ClearWriteFailurePropagates(t *testing.T) {
 	}
 }
 
+func TestStopWith_JoinsClearAndMessageWriteFailures(t *testing.T) {
+	writeErr := errors.New("stop boom")
+	spinner := &failAfterWriter{n: 1, err: writeErr}
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("*")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var stopErr error
+	callWithTimeout(t, 2*time.Second, "StopWith", func() { stopErr = pair.Spinner.StopWith("bye") })
+	if !errors.Is(stopErr, writeErr) {
+		t.Fatalf("expected StopWith to propagate the failure, got %v", stopErr)
+	}
+	if got := strings.Count(stopErr.Error(), writeErr.Error()); got != 2 {
+		t.Errorf("expected both the clear() and message write failures joined into one error (message appearing twice), got %q (count=%d)", stopErr.Error(), got)
+	}
+}
+
 func TestStopNoClear_WritesSuffixWithoutClearing(t *testing.T) {
 	spinner := &syncBuffer{}
 	ticker := make(chan time.Time)
@@ -779,6 +808,36 @@ func TestStopNoClear_WritesSuffixWithoutClearing(t *testing.T) {
 	}
 	if want := before + "bye"; after != want {
 		t.Errorf("expected the frozen frame followed by the raw suffix with no clear sequence in between, got %q, want %q", after, want)
+	}
+}
+
+func TestStopNoClear_CommitsUnchangedFrameAfterPartialWrite(t *testing.T) {
+	shared := &syncBuffer{}
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("hehe")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if _, err := pair.Standard.Write([]byte("abc")); err != nil {
+		t.Fatalf("write abc: %v", err)
+	}
+	before := shared.String()
+
+	var stopErr error
+	callWithTimeout(t, 2*time.Second, "StopNoClear", func() { stopErr = pair.Spinner.StopNoClear("hoho") })
+	if stopErr != nil {
+		t.Fatalf("stopNoClear: %v", stopErr)
+	}
+
+	after := strings.TrimPrefix(shared.String(), before)
+	if !strings.Contains(after, "hehe") {
+		t.Errorf("expected the outgoing frame to be committed to scrollback again at Stop time (nothing on screen currently backs the stale st.frame after the partial write), but nothing new after %q was written except %q", before, after)
 	}
 }
 
@@ -863,6 +922,293 @@ func TestSetFrame_NilFrameFuncErrors(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when setting a nil frame func")
 	}
+}
+
+func TestSetFrameWith_WritesMessageThenDrawsNewFrame(t *testing.T) {
+	spinner := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("a")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	before := spinner.String()
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() {
+		err = pair.Spinner.SetFrameWith(staticFrame([]byte("b")), "msg\n")
+	})
+	if err != nil {
+		t.Fatalf("setFrameWith: %v", err)
+	}
+
+	if want := before + string(clearLineBytes) + "msg\n" + "b"; spinner.String() != want {
+		t.Errorf("expected clear, then the message, then the new frame drawn, got %q, want %q", spinner.String(), want)
+	}
+}
+
+func TestSetFrameWith_NilFrameFuncErrors(t *testing.T) {
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("a")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() { err = pair.Spinner.SetFrameWith(nil, "msg") })
+	if err == nil {
+		t.Error("expected error when setting a nil frame func")
+	}
+}
+
+func TestSetFrameWith_PropagatesStillFrameWriteError(t *testing.T) {
+	wantErr := errors.New("disk full")
+	spinner := &failOnCallWriter{on: 3, err: wantErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("a")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() {
+		err = pair.Spinner.SetFrameWith(staticFrame([]byte("b")), "msg\n")
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected SetFrameWith to propagate the message write failure, got %v", err)
+	}
+}
+
+func TestSetFrameWith_PropagatesNewFrameDrawError(t *testing.T) {
+	wantErr := errors.New("disk full")
+	spinner := &failOnCallWriter{on: 4, err: wantErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("a")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() {
+		err = pair.Spinner.SetFrameWith(staticFrame([]byte("b")), "msg\n")
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected SetFrameWith to propagate the new frame's draw failure, got %v", err)
+	}
+	if !strings.Contains(spinner.String(), "msg\n") {
+		t.Errorf("expected the message to have been committed before the failing draw, got %q", spinner.String())
+	}
+}
+
+func TestSetFrameWith_PropagatesWriteError(t *testing.T) {
+	wantErr := errors.New("disk full")
+	spinner := &failAfterWriter{n: 1, err: wantErr}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("a")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() {
+		err = pair.Spinner.SetFrameWith(staticFrame([]byte("b")), "msg\n")
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected SetFrameWith to propagate the write failure, got %v", err)
+	}
+}
+
+func TestSetFrameNoClear_RedrawsChangedFrameBeforeSuffix(t *testing.T) {
+	spinner := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	var cur atomic.Pointer[[]byte]
+	first := []byte("old%")
+	cur.Store(&first)
+	frameFn := func() ([]byte, error) { return *cur.Load(), nil }
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, frameFn, ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	before := spinner.String()
+
+	fresh := []byte("fresh%")
+	cur.Store(&fresh)
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() {
+		err = pair.Spinner.SetFrameNoClear(staticFrame([]byte("next%")), " done")
+	})
+	if err != nil {
+		t.Fatalf("setFrameNoClear: %v", err)
+	}
+
+	if want := before + string(clearLineBytes) + "fresh%" + " done" + "\n" + "next%"; spinner.String() != want {
+		t.Errorf("expected the changed outgoing frame to be redrawn fresh before the suffix, a trailing newline forced onto the suffix (since it didn't already end in one), then the new frame, got %q, want %q", spinner.String(), want)
+	}
+}
+
+func TestSetFrameNoClear_WritesSuffixWithoutClearingWhenFrameUnchanged(t *testing.T) {
+	spinner := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("same%")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	before := spinner.String()
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() {
+		err = pair.Spinner.SetFrameNoClear(staticFrame([]byte("next%")), " done")
+	})
+	if err != nil {
+		t.Fatalf("setFrameNoClear: %v", err)
+	}
+
+	if want := before + " done" + "\n" + "next%"; spinner.String() != want {
+		t.Errorf("expected the suffix appended with no clear sequence, a trailing newline forced onto it, then the new frame with no clear before it either, got %q, want %q", spinner.String(), want)
+	}
+}
+
+func TestSetFrameNoClear_NilFrameFuncErrors(t *testing.T) {
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, &syncBuffer{}, staticFrame([]byte("a")), make(chan time.Time))
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() { err = pair.Spinner.SetFrameNoClear(nil, "msg") })
+	if err == nil {
+		t.Error("expected error when setting a nil frame func")
+	}
+}
+
+func TestSetFrameNoClear_InsertsSafetyNewlineAfterPartialWrite(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	var cur atomic.Pointer[[]byte]
+	first := []byte("hehe")
+	cur.Store(&first)
+	frameFn := func() ([]byte, error) { return *cur.Load(), nil }
+
+	pair, err := WrapPair(context.Background(), shared, shared, frameFn, ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if _, err := pair.Standard.Write([]byte("abc")); err != nil {
+		t.Fatalf("write abc: %v", err)
+	}
+	before := shared.String()
+
+	changed := []byte("fresh")
+	cur.Store(&changed)
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() {
+		err = pair.Spinner.SetFrameNoClear(staticFrame([]byte("haha")), "hoho")
+	})
+	if err != nil {
+		t.Fatalf("setFrameNoClear: %v", err)
+	}
+
+	if want := before + "\n" + "fresh" + "hoho" + "\n" + "haha"; shared.String() != want {
+		t.Errorf("expected a safety newline before the committed frame+suffix (since the previous write hadn't ended in one), a trailing newline forced onto the suffix, then the new frame drawn immediately, got %q, want %q", shared.String(), want)
+	}
+}
+
+func TestSetFrameWith_InsertsSafetyNewlineAfterPartialWrite(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("hehe")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if _, err := pair.Standard.Write([]byte("abc")); err != nil {
+		t.Fatalf("write abc: %v", err)
+	}
+	before := shared.String()
+
+	callWithTimeout(t, 2*time.Second, "SetFrameWith", func() {
+		err = pair.Spinner.SetFrameWith(staticFrame([]byte("haha")), "msg\n")
+	})
+	if err != nil {
+		t.Fatalf("setFrameWith: %v", err)
+	}
+
+	if want := before + "\n" + "msg\n" + "haha"; shared.String() != want {
+		t.Errorf("expected a safety newline before the committed message (since the previous write hadn't ended in one) and the new frame drawn immediately after (the message already ended in \\n, so no extra trailing newline is forced), got %q, want %q", shared.String(), want)
+	}
+}
+
+func TestSetFrameNoClear_ResumesAnimatingAfterUnchangedFrame(t *testing.T) {
+	spinner := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), &syncBuffer{}, spinner, staticFrame([]byte("same%")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() {
+		err = pair.Spinner.SetFrameNoClear(staticFrame([]byte("next%")), " done")
+	})
+	if err != nil {
+		t.Fatalf("setFrameNoClear: %v", err)
+	}
+
+	ticker <- time.Now()
+	waitForCondition(t, func() bool { return strings.Contains(spinner.String(), "next%") })
 }
 
 func TestWrite_ClearsAndRedrawsSpinner(t *testing.T) {
@@ -1230,7 +1576,6 @@ func TestTicker_ClosedChannelStopsDrivingRedraws(t *testing.T) {
 		t.Errorf("a closed ticker must not keep driving redraws: getFrame calls went %d -> %d", settled, got)
 	}
 
-	// The actor stays responsive rather than spinning on the closed channel.
 	callWithTimeout(t, 2*time.Second, "Stop", func() { _ = pair.Spinner.Stop() })
 	callWithTimeout(t, 2*time.Second, "Close", func() { _ = pair.Spinner.Close() })
 }
@@ -1794,5 +2139,74 @@ func TestWrite_AfterClose_PassesThroughWithoutResurrectingStaleFrame(t *testing.
 	final := shared.String()
 	if final != afterClose+"goodbye\n" {
 		t.Errorf("expected the post-Close write to reach the stream untouched; got %q", final)
+	}
+}
+
+func TestSetFrame_DoesNotCorruptPartialWrite(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("a")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if _, err := pair.Standard.Write([]byte("Uploading file.zip")); err != nil {
+		t.Fatalf("partial write: %v", err)
+	}
+	before := shared.String()
+
+	callWithTimeout(t, 2*time.Second, "SetFrame", func() { err = pair.Spinner.SetFrame(staticFrame([]byte("NEWFRAME"))) })
+	if err != nil {
+		t.Fatalf("setFrame: %v", err)
+	}
+
+	if got := shared.String(); got != before {
+		t.Fatalf("expected SetFrame to draw nothing yet (still mid-line, no message to anchor a safety newline to), got %q appended after %q", got, before)
+	}
+
+	if _, err := pair.Standard.Write([]byte(" done\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if want := before + " done\nNEWFRAME"; shared.String() != want {
+		t.Errorf("expected the deferred frame to draw once a real newline-terminated write completed the line, got %q, want %q", shared.String(), want)
+	}
+}
+
+func TestSetFrameNoClear_CommitsUnchangedOutgoingFrameAfterPartialWrite(t *testing.T) {
+	shared := &syncBuffer{}
+	ticker := make(chan time.Time)
+
+	pair, err := WrapPair(context.Background(), shared, shared, staticFrame([]byte("hehe")), ticker)
+	if err != nil {
+		t.Fatalf("WrapPair: %v", err)
+	}
+	defer func() { _ = pair.Spinner.Close() }()
+
+	callWithTimeout(t, 2*time.Second, "Start", func() { err = pair.Spinner.Start(context.Background()) })
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	if _, err := pair.Standard.Write([]byte("abc")); err != nil {
+		t.Fatalf("write abc: %v", err)
+	}
+	before := shared.String()
+
+	callWithTimeout(t, 2*time.Second, "SetFrameNoClear", func() {
+		err = pair.Spinner.SetFrameNoClear(staticFrame([]byte("haha")), "hoho")
+	})
+	if err != nil {
+		t.Fatalf("setFrameNoClear: %v", err)
+	}
+
+	if want := before + "\n" + "hehe" + "hoho" + "\n" + "haha"; shared.String() != want {
+		t.Errorf("expected the unchanged outgoing frame to still be committed (on its own line, since nothing on screen backs it after the partial write), got %q, want %q", shared.String(), want)
 	}
 }

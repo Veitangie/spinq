@@ -23,8 +23,10 @@ type stop struct {
 }
 
 type setGetFrame struct {
-	getFrame FrameFunc
-	notify   chan error
+	lastFrame []byte
+	getFrame  FrameFunc
+	notify    chan error
+	clear     bool
 }
 
 type setTicker struct {
@@ -95,27 +97,43 @@ func (st *spinnerState) startBackground() {
 					st.stopFromActor()
 					lastFrame := typed.lastFrame
 					prefix := []byte{}
+					var prefixErr error
 					if !typed.clear {
 						st.wg.Wait()
 
-						if maybePrefix, err := st.safeGetFrame(st.getFrame); err == nil {
+						var maybePrefix []byte
+						if maybePrefix, prefixErr = st.safeGetFrame(st.getFrame); prefixErr == nil {
 							prefix = maybePrefix
 						}
 					}
 
-					var err error
-					st.writerMut.Lock()
 					if len(prefix) != 0 && !bytes.Equal(prefix, st.frame) {
 						lastFrame = append(prefix, lastFrame...)
 						typed.clear = true
 					}
 
+					var err error
+					st.writerMut.Lock()
+
+					if !typed.clear && !st.needClear {
+						prefix = st.frame
+						lastFrame = append(prefix, lastFrame...)
+					}
+
 					if typed.clear {
 						err = st.clear()
 					}
+
 					st.frame = []byte{}
 
 					if len(lastFrame) != 0 {
+						if !st.canWrite {
+							temp := make([]byte, len(lastFrame)+1)
+							temp[0] = '\n'
+							copy(temp[1:], lastFrame)
+							lastFrame = temp
+						}
+
 						_, errLastFrame := st.wrapped.Write(lastFrame)
 						if err != nil && errLastFrame != nil {
 							err = errors.Join(err, errLastFrame)
@@ -144,29 +162,7 @@ func (st *spinnerState) startBackground() {
 					}
 
 				case setGetFrame:
-					if typed.getFrame == nil {
-						typed.notify <- errors.New("unable to set nil FrameFunc")
-						close(typed.notify)
-						continue
-					}
-
-					st.getFrame = typed.getFrame
-					st.revision += 1
-
-					st.wg.Wait()
-
-					if st.running.Load() {
-						frame, err := st.safeGetFrame(st.getFrame)
-						if err == nil {
-							err = st.set(frame)
-							if err != nil {
-								st.stopFromActor()
-							}
-							typed.notify <- err
-						}
-					}
-
-					close(typed.notify)
+					st.setGetFrameFromActor(typed)
 
 				case setTicker:
 					st.ticker = typed.ticker
@@ -236,4 +232,94 @@ func (st *spinnerState) stopFromActor() {
 		close(st.notifyStopped)
 		st.notifyStopped = nil
 	}
+}
+
+func (st *spinnerState) setGetFrameFromActor(message setGetFrame) {
+	defer close(message.notify)
+
+	if message.getFrame == nil {
+		message.notify <- errors.New("unable to set nil FrameFunc")
+		return
+	}
+
+	st.wg.Wait()
+
+	if st.running.Load() {
+		stillFrame := message.lastFrame
+		shouldClear := message.clear
+		setPrefix := false
+		prefix := []byte{}
+		var prefixErr error
+
+		if !shouldClear {
+			prefix, prefixErr = st.safeGetFrame(st.getFrame)
+			if prefixErr == nil && !bytes.Equal(st.frame, prefix) {
+				stillFrame = append(prefix, stillFrame...)
+				shouldClear = true
+				setPrefix = true
+			}
+		}
+
+		frame, frameErr := st.safeGetFrame(message.getFrame)
+
+		st.writerMut.Lock()
+		defer st.writerMut.Unlock()
+
+		if setPrefix {
+			st.frame = prefix
+			st.cd.adjust(st)
+		}
+
+		if !shouldClear && !st.needClear {
+			prefix = st.frame
+			stillFrame = append(prefix, stillFrame...)
+		}
+
+		if shouldClear {
+			err := st.clear()
+			if err != nil {
+				st.stopFromActor()
+				message.notify <- err
+				return
+			}
+		}
+		st.needClear = false
+
+		if len(stillFrame) != 0 {
+			endsWithNewline := stillFrame[len(stillFrame)-1] == '\n'
+			if !st.canWrite || !endsWithNewline {
+				buf := bytes.NewBuffer(make([]byte, 0, len(stillFrame)+2))
+				if !st.canWrite {
+					buf.WriteByte('\n')
+				}
+				buf.Write(stillFrame)
+				if !endsWithNewline {
+					buf.WriteByte('\n')
+				}
+				stillFrame = buf.Bytes()
+			}
+			_, err := st.wrapped.Write(stillFrame)
+
+			if err != nil {
+				st.stopFromActor()
+				message.notify <- err
+				return
+			}
+			st.canWrite = true
+		}
+
+		if frameErr == nil {
+			st.frame = frame
+			st.cd.adjust(st)
+			err := st.draw()
+			if err != nil {
+				st.stopFromActor()
+				st.frame = []byte{}
+				message.notify <- err
+			}
+		}
+	}
+
+	st.getFrame = message.getFrame
+	st.revision += 1
 }
